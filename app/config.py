@@ -11,16 +11,30 @@ ROOT = Path(__file__).resolve().parent.parent
 def _load_dotenv() -> None:
     """加载项目根 .env 文件到 os.environ.
 
-    优先级 (`.env` 有值优先, 无值走父 env):
-    - .env 显式填了值 → **覆盖** 父进程已 export 的同名 env
-    - .env 留空        → 不写, 保留父进程值 (兼容 ccswitch 等切换器)
+    设计原则: **.env 是 dashboard 的唯一 ANTHROPIC API 配置源, 完全独立于
+    本地 shell**. 启动时先清掉父 shell 的 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
+    / ANTHROPIC_MODEL, 然后从 .env 加载. 这样:
 
-    历史 (2026-06-09 改): 旧版用 setdefault, 父 env 永远优先, 改 .env 后
-    需要 unset shell env 才生效, 违反"改配置文件立即生效"直觉.
+    - 你本地 ccswitch / .zshrc / 别的工具切来切去, 是给**交互式 CLI** 用的,
+      跟 secweb 这个后台服务无关.
+    - 改 .env 立即生效, 不需要 unset 任何 shell env.
+    - .env 留空时走 SDK 默认 (~/.claude/ 已登录态), 不会意外继承父 shell.
+
+    历史 (2026-06-09):
+    - v1: setdefault, 父 env 永远优先 → 改 .env 不生效, 调试很难.
+    - v2: .env 有值覆盖, 留空走父 env → 仍受本地 shell 影响.
+    - v3 (本版): 主动清父 env, 只认 .env. 完全解耦本地 shell.
     """
     f = ROOT / ".env"
     if not f.exists():
         return
+
+    # 关键: 先清掉父 shell 的 ANTHROPIC_* 配置 (ccswitch / .zshrc 等切换器
+    # 设置的值不应影响 secweb 这个独立服务).
+    for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"):
+        os.environ.pop(k, None)
+
+    # 然后从 .env 加载. 显式覆盖 (.env 里写啥就生效啥).
     for line in f.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -28,7 +42,6 @@ def _load_dotenv() -> None:
         k, v = line.split("=", 1)
         k, v = k.strip(), v.strip()
         if v:
-            # .env 显式填了值 → 强制覆盖, 立即生效
             os.environ[k] = v
 
 
@@ -80,16 +93,13 @@ class Config:
         )
 
     def export_anthropic_env(self) -> None:
-        """把 .env 里读到的 Anthropic 配置回写到 os.environ, 给 SDK 子进程继承.
+        """把 Config 里的 Anthropic 配置回写到 os.environ, 给 SDK 子进程继承.
 
-        优先级 (`.env` 有值优先, 无值走父 env):
-        - .env 填了值      → **以 .env 为准** (覆盖 shell export)
-        - .env 留空        → 保留父进程 env (兼容 ccswitch / shell rc 等切换工具)
-        - 两边都没         → SDK 走 ~/.claude/ 默认认证
+        注: _load_dotenv 已在模块加载时清父 env + 写 .env 值, 这里再写一次
+        是为了保证 Config 实例化后 (e.g. 测试场景手动构造 Config) 行为一致.
 
-        历史 (2026-06-09 改): 旧版用 setdefault, 父 env 永远优先于 .env.
-        但这违反"改 .env 立即生效"直觉, 开源用户调试很难定位为何配置不生效.
-        现版让 .env 显式赋值时覆盖父 env, 留空时仍兼容 ccswitch 切换器.
+        secweb 独立于本地 shell — ANTHROPIC_* 完全由 .env 决定, 不受
+        ccswitch / .zshrc 等本地切换器影响 (见 _load_dotenv 注释).
         """
         for k, v in (
             ("ANTHROPIC_BASE_URL", self.anthropic_base_url),
@@ -97,5 +107,7 @@ class Config:
             ("ANTHROPIC_MODEL", self.anthropic_model),
         ):
             if v:
-                # .env 显式填了值 → 强制覆盖父 env, 立即生效
                 os.environ[k] = v
+            else:
+                # .env 留空 → 确保 os.environ 里也没有 (可能被 _load_dotenv 清过, 这里再保险)
+                os.environ.pop(k, None)
