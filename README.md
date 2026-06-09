@@ -197,12 +197,12 @@ EOF
     <td align="center">
       <strong>🌐 公众号</strong><br/>
       <em>关注获取最新版本 / 安全研究 / 渗透方法论</em><br/>
-      <img src="docs/images/wechat-public.png" width="220" alt="公众号二维码"/>
+      <img src="docs/images/wechat-public.jpg" width="220" alt="公众号二维码"/>
     </td>
     <td align="center">
       <strong>💬 个人微信</strong><br/>
       <em>交流合作 / 漏洞讨论 / 项目共建</em><br/>
-      <img src="docs/images/wechat-personal.jpg" width="220" alt="个人微信二维码"/>
+      <img src="docs/images/wechat-personal.png" width="220" alt="个人微信二维码"/>
     </td>
   </tr>
 </table>
