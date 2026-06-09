@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>secweb · auth</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="login-body">
+  <div class="grid-bg"></div>
+  <div class="scanlines"></div>
+  <form id="f" class="login-card">
+    <div class="login-banner">
+      <span class="logo-bracket">[</span>SEC<span class="logo-accent">WEB</span><span class="logo-bracket">]</span>
+    </div>
+    <pre class="ascii-banner">
+ ▄▖▄▖▄▖▖▖▖▖▄▖▄▖
+ ▚ ▙▖▌ ▌▌▌▌▙▖▙▖
+ ▄▌▙▖▙▖▚▘▚▘▙▖▙▖</pre>
+    <div class="muted login-tag">// 仅限授权访问</div>
+    <div class="prompt-row">
+      <span class="prompt-prefix">root@secweb:~$</span>
+      <input id="pw" type="password" placeholder="访问令牌" autofocus />
+    </div>
+    <button type="submit">&gt; 认证登录</button>
+    <div id="err" class="err"></div>
+  </form>
+  <script>
+    const f = document.getElementById('f');
+    const err = document.getElementById('err');
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      const fd = new FormData();
+      fd.append('password', document.getElementById('pw').value);
+      const r = await fetch('/login', { method: 'POST', body: fd });
+      if (r.ok) location.href = '/';
+      else err.textContent = '[错误] ' + ((await r.json()).error || '认证失败');
+    });
+  </script>
+</body>
+</html>

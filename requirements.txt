@@ -1,0 +1,7 @@
+fastapi==0.115.0
+# 与 fastapi 0.115.0 绑定 — 高版本 starlette 移除了 on_startup kwarg 会启动炸
+starlette<0.39
+uvicorn[standard]==0.30.6
+itsdangerous==2.2.0
+python-multipart==0.0.9
+claude-agent-sdk>=0.2.89

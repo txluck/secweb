@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.idea/
+.vscode/
+
+# 审计产物默认输出目录(本 Skill 在用户 CWD 下创建)
+wxaudit-output/
+wxaudit-output-*/

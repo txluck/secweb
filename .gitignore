@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+data/
+runs/
+.env
+.playwright-mcp/
+*.log
+.DS_Store
+# 默认忽略图片, 但放进 docs/ 的截图/二维码豁免
+*.png
+*.jpg
+*.jpeg
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.jpeg

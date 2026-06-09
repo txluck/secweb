@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>secweb · 渗透调度台</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="grid-bg"></div>
+<div class="scanlines"></div>
+<div id="app" class="app">
+  <header class="top">
+    <h1 style="cursor:pointer" @click="goHome">
+      <span class="logo-bracket">[</span>SEC<span class="logo-accent">WEB</span><span class="logo-bracket">]</span>
+    </h1>
+    <button v-if="route!=='home'" class="nav-btn nav-back" @click="goHome" title="返回项目列表">
+      <span class="nav-ico">←</span><span>项目列表</span>
+    </button>
+    <button v-if="route==='home'" class="nav-btn nav-reports" @click="goReports" title="所有报告">
+      <span class="nav-ico">▤</span><span>报告库</span>
+    </button>
+    <span v-if="route==='detail' && currentProject" class="crumb">
+      <span class="muted">::</span>
+      <span class="crumb-name">{{ currentProject.name }}</span>
+      <button class="nav-btn nav-reports" style="margin-left:10px" @click="goProjectReports">
+        <span class="nav-ico">▤</span><span>报告库</span>
+      </button>
+    </span>
+    <div class="stats" v-if="route==='detail'">
+      <span>排队<b>{{ stats.queued || 0 }}</b></span>
+      <span>运行<b style="color:var(--neon-cyan)">{{ stats.running || 0 }}</b></span>
+      <span>待补充<b style="color:var(--neon-yellow)">{{ stats.needs_input || 0 }}</b></span>
+      <span>完成<b style="color:var(--neon-green)">{{ stats.done || 0 }}</b></span>
+      <span>失败<b style="color:var(--neon-red)">{{ stats.failed || 0 }}</b></span>
+      <span>停止<b>{{ stats.stopped || 0 }}</b></span>
+      <span>发现<b style="color:var(--neon-magenta)">{{ stats.findings || 0 }}</b></span>
+    </div>
+    <div class="stats" v-else>
+      <span>项目<b>{{ projects.length }}</b></span>
+    </div>
+    <div class="nav-model" :title="'当前模型: ' + (currentModel || '(默认)') + ' · 切换后只影响新任务'">
+      <span class="muted nav-ico">⌬</span>
+      <select v-model="currentModel" @change="onModelChange" class="nav-model-select">
+        <option v-for="m in modelPresets" :key="m.id" :value="m.id">{{ m.label }}</option>
+      </select>
+    </div>
+    <button class="nav-btn nav-settings" @click="openMailSettings" title="邮件通知设置">
+      <span class="nav-ico">⚙</span><span>邮件</span>
+    </button>
+    <button class="nav-btn nav-pwd" @click="openPasswordModal" title="修改登录密码">
+      <span class="nav-ico">🔑</span><span>密码</span>
+    </button>
+    <button class="nav-btn nav-logout" @click="logout" title="登出">
+      <span class="nav-ico">⏻</span><span>登出</span>
+    </button>
+  </header>
+
+  <!-- 视图: 项目列表 -->
+  <main v-if="route==='home'" class="home">
+    <div class="home-head">
+      <h2><span class="muted">&gt;</span> 项目列表</h2>
+      <div style="display:flex;gap:10px">
+        <button @click="goReports">&gt; 报告库</button>
+        <button class="primary" @click="openCreateProject">+ 新建项目</button>
+      </div>
+    </div>
+    <div class="project-grid" v-if="projects.length">
+      <div v-for="p in projects" :key="p.id"
+        class="project-card" @click="openProject(p.id)">
+        <div class="project-card-head">
+          <h3>{{ p.name }}</h3>
+          <button class="icon" @click.stop="confirmDeleteProject(p)" title="删除">×</button>
+        </div>
+        <div class="project-desc muted">{{ p.description || '// 暂无描述' }}</div>
+        <div class="progress-row" v-if="p.task_count > 0">
+          <div class="progress-bar">
+            <div class="bar-done" :style="{width: progressPct(p, 'done') + '%'}"></div>
+            <div class="bar-running" :style="{width: progressPct(p, 'running') + '%'}"></div>
+            <div class="bar-wait" :style="{width: progressPct(p, 'needs_input') + '%'}"></div>
+            <div class="bar-fail" :style="{width: progressPct(p, 'failed') + '%'}"></div>
+          </div>
+          <span class="progress-text muted">
+            <b style="color:var(--neon-green)">{{ p.done_count || 0 }}</b>
+            / {{ p.task_count }}
+            <span v-if="p.running_count > 0">· <b style="color:var(--neon-cyan)">{{ p.running_count }} 运行</b></span>
+          </span>
+        </div>
+        <div class="project-stats">
+          <span>任务 <b>{{ p.task_count }}</b></span>
+          <span v-if="p.running_count > 0" class="run">运行 <b>{{ p.running_count }}</b></span>
+          <span v-if="p.needs_input_count > 0" class="wait">待补充 <b>{{ p.needs_input_count }}</b></span>
+          <span v-if="p.failed_count > 0" class="fail">失败 <b>{{ p.failed_count }}</b></span>
+          <span v-if="p.finding_count > 0" class="hit">发现 <b>{{ p.finding_count }}</b></span>
+        </div>
+        <div class="project-running" v-if="p.latest_running_url">
+          <span class="muted">▶ 正在跑</span>
+          <span class="run-url" :title="p.latest_running_url">{{ p.latest_running_url }}</span>
+        </div>
+        <div class="project-hit" v-else-if="p.latest_finding_url">
+          <span class="muted">★ 最新发现</span>
+          <span class="hit-url" :title="p.latest_finding_url">{{ p.latest_finding_url }}</span>
+        </div>
+        <div class="project-foot muted">
+          {{ p.last_active ? '⏱ ' + formatTime(p.last_active) : '⏱ 暂未活动' }}
+        </div>
+      </div>
+    </div>
+    <div v-else class="empty" style="height:60vh;flex-direction:column;gap:16px">
+      <div class="ascii-empty">
+        ┌─────────────────┐<br/>
+        │  暂无项目       │<br/>
+        │  请先初始化 &gt;_ │<br/>
+        └─────────────────┘
+      </div>
+      <button class="primary" @click="openCreateProject">+ 新建首个项目</button>
+    </div>
+  </main>
+
+  <!-- 视图: 报告库 -->
+  <main v-else-if="route==='reports'" class="home">
+    <div class="home-head">
+      <h2>
+        <span class="muted">&gt;</span> 报告库
+        <span class="muted" style="font-size:13px;margin-left:10px"
+          v-if="reportsScope">{{ reportsScope }}</span>
+      </h2>
+      <button @click="goHome">← 返回项目列表</button>
+    </div>
+    <div v-if="reportsLoading" class="muted">加载中…</div>
+    <div v-else-if="!reports.length" class="empty" style="height:50vh">尚无报告产出</div>
+    <div v-else class="reports-grid">
+      <div v-for="r in reports" :key="r.id" class="report-card"
+        @click="openReportTask(r)">
+        <div class="report-card-head">
+          <span class="badge finding">报告</span>
+          <span class="muted" style="font-size:11px">{{ formatTime(r.finished_at || r.created_at) }}</span>
+        </div>
+        <div class="report-url" :title="r.url">{{ r.url }}</div>
+        <div class="muted" style="font-size:11px" v-if="r.project_name">@ {{ r.project_name }}</div>
+        <pre class="report-preview">{{ r.preview || '(报告为空)' }}</pre>
+        <div class="muted" style="font-size:10px;margin-top:6px">
+          📄 {{ r.report_path }} · {{ humanSize(r.size || 0) }}
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 视图: 项目详情 -->
+  <main v-else>
+    <aside class="sidebar">
+      <div class="sidebar-cta">
+        <button class="primary cta-add" @click="submitOpen = true">
+          <span class="cta-plus">+</span>
+          <span>新增目标</span>
+          <span class="muted cta-hint">// {{ currentProject ? currentProject.name : '—' }} · 并发 {{ projectConcurrency || '—' }}</span>
+        </button>
+      </div>
+      <div class="filters">
+        <span class="chip" :class="{active: filter==='all'}" @click="filter='all'">全部</span>
+        <span class="chip" :class="{active: filter==='running'}" @click="filter='running'">运行</span>
+        <span class="chip" :class="{active: filter==='needs_input'}" @click="filter='needs_input'">待补充</span>
+        <span class="chip" :class="{active: filter==='done'}" @click="filter='done'">完成</span>
+        <span class="chip" :class="{active: filter==='findings'}" @click="filter='findings'">有发现</span>
+        <span class="chip" :class="{active: filter==='failed'}" @click="filter='failed'">失败</span>
+        <span class="chip" :class="{active: filter==='stopped'}" @click="filter='stopped'">停止</span>
+      </div>
+      <div class="task-list">
+        <div v-for="t in filteredTasks" :key="t.id"
+          class="task-item" :class="{active: selectedId===t.id}"
+          @click="selectTask(t.id)">
+          <div class="url" :title="t.url">{{ t.url }}</div>
+          <div class="meta">
+            <span class="badge" :class="t.status">{{ statusLabel(t.status) }}</span>
+            <span v-if="t.has_finding" class="badge finding">发现</span>
+            <span v-if="t.degraded_to_python" class="badge degraded" title="本任务 playwright MCP 浏览器调用偏少, 大概率漏测了 IDOR / XSS / CSRF / 业务逻辑 / SPA-only 这类只能在真实浏览器里看到的问题, 建议人工复测">⚠ 可能漏测</span>
+            <span class="muted">{{ formatTime(t.created_at) }}</span>
+          </div>
+        </div>
+        <div v-if="!filteredTasks.length" class="empty empty-tasks" style="padding:30px">
+          <div>暂无任务</div>
+          <button class="primary" style="margin-top:14px" @click="submitOpen = true">+ 新增目标</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="detail" v-if="selected">
+      <div class="detail-head">
+        <span class="url">{{ selected.url }}</span>
+        <span class="badge" :class="selected.status">{{ statusLabel(selected.status) }}</span>
+        <span v-if="selected.has_finding" class="badge finding">有发现</span>
+        <span v-if="selected.degraded_to_python" class="badge degraded" title="playwright MCP 调用偏少, 任务被诱导成 curl 路线, 可能漏测 IDOR / XSS / CSRF / 业务逻辑 / SPA-only 路由">⚠ 可能漏测</span>
+        <div class="actions">
+          <button v-if="selected.status==='needs_input'" class="primary" @click="openAnswer(selected)">&gt; 补充输入</button>
+          <button v-if="selected.status==='running'" @click="pauseTask(selected)" title="优雅停掉 Claude，浏览器（独立 HTTP MCP daemon）保持打开，可在窗口中手动登录后点继续">⏸ 暂停</button>
+          <button v-if="selected.status==='paused'" class="primary" @click="unpauseTask(selected)" title="用 --resume 重启 Claude 并连回同一个浏览器 daemon，登录态/Cookie 自动延用">▶ 继续执行</button>
+          <button v-if="['running','queued'].includes(selected.status)" class="danger" @click="stop(selected.id)">■ 停止</button>
+          <button v-if="selected.status==='awaiting_login'" class="primary" @click="loginDone(selected)" title="关闭登录浏览器, 继续执行任务">✓ 已登录，继续</button>
+          <button v-if="['failed','stopped','done'].includes(selected.status)" @click="resumeRerun(selected.id)" title="沿用原 session_id, 保留全部上下文">↻ 续跑</button>
+          <button v-if="['running','failed','stopped','done'].includes(selected.status)" class="primary" @click="openFollowup(selected)" :title="selected.status==='running' ? '暂停当前执行, 用新提示词在原会话上续跑' : '在原会话上补充提示词继续'">▶ 补充提示词</button>
+          <button v-if="['failed','stopped','done'].includes(selected.status)" @click="retry(selected.id)" title="生成新 session_id, 完全重来">↻ 重跑</button>
+          <button class="danger" @click="del(selected.id)">× 删除</button>
+        </div>
+      </div>
+      <div class="detail-tabs">
+        <div class="tab" :class="{active: tab==='log'}" @click="tab='log'">&gt; 实时日志</div>
+        <div class="tab" :class="{active: tab==='report'}" @click="loadReport">&gt; 报告
+          <span v-if="selected.has_finding" style="color:var(--neon-magenta)">●</span></div>
+        <div class="tab" :class="{active: tab==='files'}" @click="loadFiles">&gt; 产物</div>
+        <div class="tab" :class="{active: tab==='meta'}" @click="tab='meta'">&gt; 元数据</div>
+      </div>
+      <div class="detail-body" ref="body" @scroll="onLogScroll">
+        <div v-if="tab==='log'">
+          <div v-if="selected.status==='paused'" class="paused-banner">
+            ⏸ 任务已暂停 — playwright 浏览器仍保持打开（HTTP MCP 守护进程独立于 Claude），请在浏览器中完成登录或其他操作后点击「▶ 继续执行」，Claude 会用同一会话续跑并复用浏览器状态
+          </div>
+          <div class="log-toolbar">
+            <label><input type="checkbox" v-model="autoFollow" /> 自动跟随</label>
+            <label><input type="checkbox" v-model="showThinking" /> 显示思考</label>
+            <label><input type="checkbox" v-model="showSystem" /> 显示系统事件</label>
+            <span class="muted">{{ visibleEvents.length }} / {{ events.length }} 条</span>
+            <span class="grow"></span>
+            <span v-if="thinkingStatus" class="thinking-indicator" :title="'AI 思考中, 不是卡死. 没有新工具事件超过 5 秒就会显示这个计时器.'">
+              <span class="thinking-dot"></span>
+              AI 思考中 {{ thinkingStatus }}
+            </span>
+            <span v-if="selected.status==='running'" style="color:var(--neon-green);text-shadow:0 0 6px var(--neon-green-glow)">● 实时</span>
+            <button @click="reloadEvents" style="padding:2px 10px">↻ 重载</button>
+          </div>
+          <div class="log-stream" ref="logStream">
+            <div v-for="ev in visibleEvents" :key="ev.id"
+              class="log-line" :class="['kind-'+ev.kind, ev.payload && ev.payload.is_error ? 'is-error' : '']">
+              <span class="ts">{{ formatClock(ev.ts) }}</span>
+              <div class="body">
+                <template v-if="ev.kind==='tool_use'">
+                  <span class="tool-name">▶ {{ ev.payload.name }}</span>
+                  <span>{{ ev.payload.input }}</span>
+                </template>
+                <template v-else-if="ev.kind==='tool_result'">
+                  <span class="muted" style="font-size:11px">[{{ ev.payload.is_error ? '工具错误' : '工具输出' }}]</span>
+                  <pre style="margin:4px 0 0 0;white-space:pre-wrap">{{ ev.payload.content }}</pre>
+                </template>
+                <template v-else-if="ev.kind==='result'">
+                  <span>✓ 完成 · 耗时 {{ ((ev.payload.duration_ms||0)/1000).toFixed(1) }}s · 轮次 {{ ev.payload.num_turns || '?' }}</span>
+                </template>
+                <template v-else-if="ev.kind==='status'">
+                  <span>状态变更: {{ statusLabel(ev.payload) }}</span>
+                </template>
+                <template v-else>
+                  <span>{{ formatPayload(ev) }}</span>
+                </template>
+              </div>
+            </div>
+            <div v-if="!visibleEvents.length" class="muted" style="padding:20px">尚无输出…</div>
+          </div>
+        </div>
+        <div v-else-if="tab==='report'">
+          <div v-if="reportLoading" class="muted">加载中…</div>
+          <div v-else-if="!report" class="muted">尚未生成报告。Claude 会在完成时把 report.md 写入工作目录。</div>
+          <div v-else class="report-md" v-html="renderMd(report)"></div>
+        </div>
+        <div v-else-if="tab==='files'">
+          <div v-if="!files.length" class="muted">无产物</div>
+          <ul v-else>
+            <li v-for="f in files" :key="f.path">
+              <code>{{ f.path }}</code>
+              <span class="muted"> · {{ humanSize(f.size) }}</span>
+            </li>
+          </ul>
+        </div>
+        <div v-else-if="tab==='meta'">
+          <div class="meta-row">
+            <span class="muted">session_id</span>
+            <code class="sid">{{ selected.session_id }}</code>
+            <button @click="copySession(selected.session_id)" class="ghost" style="padding:2px 10px">复制</button>
+          </div>
+          <div class="muted" style="margin:6px 0 4px 0">
+            // 终端接管 (推荐, 自动 cd 到任务 workdir):
+            <code>./resume.sh {{ selected.id }}</code>
+          </div>
+          <div class="muted" style="margin:0 0 14px 0">
+            // 或手动:
+            <code>cd {{ selected.workdir }} &amp;&amp; claude --resume {{ selected.session_id }}</code>
+          </div>
+          <!-- 探索深度卡片 -->
+          <div class="depth-card">
+            <div class="depth-head">
+              探索深度
+              <span class="grow"></span>
+              <span class="depth-overall" :class="depthLevel(selected)">{{ depthLabel(selected) }}</span>
+            </div>
+            <div class="depth-grid">
+              <div class="depth-cell" :class="depthCellLevel(selected.nav_calls, 3)">
+                <div class="depth-num">{{ selected.nav_calls || 0 }}</div>
+                <div class="depth-cap">navigate 调用</div>
+                <div class="depth-min">阈值 ≥ 3</div>
+              </div>
+              <div class="depth-cell" :class="depthCellLevel(selected.unique_routes, 3)">
+                <div class="depth-num">{{ selected.unique_routes || 0 }}</div>
+                <div class="depth-cap">不同路由</div>
+                <div class="depth-min">阈值 ≥ 3</div>
+              </div>
+              <div class="depth-cell" :class="depthCellLevel(selected.interaction_calls, 5)">
+                <div class="depth-num">{{ selected.interaction_calls || 0 }}</div>
+                <div class="depth-cap">交互动作</div>
+                <div class="depth-min">阈值 ≥ 5</div>
+              </div>
+              <div class="depth-cell" :class="depthCellLevel(selected.network_req_calls, 3)">
+                <div class="depth-num">{{ selected.network_req_calls || 0 }}</div>
+                <div class="depth-cap">network 重抓</div>
+                <div class="depth-min">阈值 ≥ 3</div>
+              </div>
+              <div class="depth-cell" :class="depthCellLevel(selected.mcp_calls, 5)">
+                <div class="depth-num">{{ selected.mcp_calls || 0 }}</div>
+                <div class="depth-cap">playwright 总调用</div>
+                <div class="depth-min">阈值 ≥ 5</div>
+              </div>
+              <div class="depth-cell" :class="bashClass(selected)">
+                <div class="depth-num">{{ (selected.py_web_calls || 0) }} / {{ /* bash 没单独存, 用占位 */ '—' }}</div>
+                <div class="depth-cap">python web 降级 / Bash</div>
+                <div class="depth-min">越低越好</div>
+              </div>
+            </div>
+          </div>
+          <!-- 契约执行卡片: 抽自 ~/.claude/skills/<skill>/SKILL.md 的强制门控,
+               看模型是否在 report.md 末尾对每条 Cn 都给了 done/N/A/skip 显式表态 -->
+          <div v-if="selected.contract_total > 0 || selected.contract_skill" class="depth-card contract-card">
+            <div class="depth-head">
+              契约执行
+              <span class="muted" style="font-size:11px;margin-left:8px" v-if="selected.contract_skill">
+                / {{ selected.contract_skill }}
+              </span>
+              <span class="grow"></span>
+              <span class="depth-overall" :class="contractLevel(selected)">{{ contractLabel(selected) }}</span>
+            </div>
+            <div class="contract-bar-wrap" v-if="selected.contract_total > 0">
+              <div class="contract-bar">
+                <div class="contract-bar-fill" :class="contractLevel(selected)"
+                  :style="{ width: contractPct(selected) + '%' }"></div>
+              </div>
+              <div class="contract-bar-text">
+                {{ selected.contract_covered || 0 }} / {{ selected.contract_total }}
+                <span class="muted">({{ contractPct(selected) }}%)</span>
+              </div>
+            </div>
+            <div class="contract-missing" v-if="contractMissingIds(selected).length">
+              <div class="muted" style="font-size:11px;margin-bottom:4px">
+                缺漏未声明 ({{ contractMissingIds(selected).length }} 项):
+              </div>
+              <div class="contract-chips">
+                <span v-for="id in contractMissingIds(selected).slice(0, 30)" :key="id"
+                  class="contract-chip" :title="contractItemHint(id)">C{{ id }}</span>
+                <span v-if="contractMissingIds(selected).length > 30" class="muted" style="font-size:11px">
+                  … +{{ contractMissingIds(selected).length - 30 }}
+                </span>
+              </div>
+            </div>
+            <div v-else-if="selected.contract_total > 0" class="muted" style="font-size:11px;margin-top:6px">
+              ✓ 全部 {{ selected.contract_total }} 条契约都有显式声明
+            </div>
+            <div v-else class="muted" style="font-size:11px;margin-top:6px">
+              当前 prompt 未匹配到 skill 契约 (/hack /idor /sqli 等), 故跳过校验
+            </div>
+          </div>
+          <pre style="white-space:pre-wrap">{{ JSON.stringify(selected, null, 2) }}</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="detail" v-else>
+      <div class="empty">← 选择一个任务，或点击左侧 「+ 新增目标」 提交批量任务</div>
+    </section>
+  </main>
+
+  <!-- 新增目标弹窗 -->
+  <div v-if="submitOpen" class="modal-bg" @click.self="submitOpen=false">
+    <div class="modal modal-wide">
+      <h2>&gt;_ 新增目标 <span class="muted" style="font-size:12px;margin-left:10px">// {{ currentProject ? currentProject.name : '—' }}</span></h2>
+      <div class="submit-box submit-box-modal">
+        <div class="conc-row">
+          <label class="conc-label">
+            <span class="muted">并发</span>
+            <input type="number" min="1" max="32" v-model.number="projectConcurrency" @change="setProjectConcurrency" />
+          </label>
+          <span class="muted conc-hint">// 项目: {{ currentProject ? currentProject.name : '—' }}</span>
+        </div>
+        <div class="cookie-row">
+          <div class="cookie-head">
+            <span class="muted">认证数据</span>
+            <span class="muted" style="font-size:10px">// prompt 里用 <code>{auth}</code> 引用 (Cookie / Token / Headers / 整段请求包)</span>
+            <span class="grow"></span>
+            <button class="ghost" style="padding:2px 8px;font-size:11px" @click="saveCookies"
+              :disabled="!cookieDirty">{{ cookieDirty ? '保存' : '已保存' }}</button>
+          </div>
+          <textarea v-model="cookieDraft" rows="3" class="cookie-input"
+            placeholder="支持任意鉴权数据，例如:&#10;  session=abc; csrf=xyz&#10;  Authorization: Bearer eyJhbGc...&#10;  X-API-Key: sk-...&#10;失效时随时改，下一次提交生效"></textarea>
+        </div>
+        <textarea v-model="urlsRaw"
+          placeholder="批量目标，每行一个&#10;https://example.com&#10;https://target.com/api"></textarea>
+        <div class="row">
+          <select v-model="promptPreset" @change="onPromptPresetChange"
+            style="flex:0 0 auto;min-width:200px">
+            <option v-for="p in PROMPT_PRESETS" :key="p.label" :value="p.value">{{ p.label }}</option>
+          </select>
+          <input v-model="prompt" placeholder="prompt 模板，{url} 会被替换 (可手改)" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="ghost" @click="submitOpen=false">取消</button>
+        <button class="primary" @click="submitUrlsFromModal" :disabled="submitting">
+          {{ submitting ? '> 提交中…' : '> 启动测试' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 补充提示词弹窗 -->
+  <div v-if="followupModal" class="modal-bg" @click.self="followupModal=null">
+    <div class="modal">
+      <h2>&gt;_ 补充提示词继续执行</h2>
+      <div class="question">
+        // 沿用原 session_id ({{ followupModal.session_id }}), 保留全部上下文<br/>
+        <span v-if="followupModal.status==='running'" style="color:var(--neon-magenta)">// 当前正在执行 — 提交后会先停止再用新提示词续跑</span>
+      </div>
+      <textarea v-model="followupText" placeholder="把要继续的指令贴进来 (例: 刚才那个 IDOR 再深挖一下, 把相邻 ID 都跑一遍)…"></textarea>
+      <div class="actions">
+        <button class="ghost" @click="followupModal=null">取消</button>
+        <button class="primary" @click="submitFollowup">{{ followupModal.status==='running' ? '暂停并继续 >' : '继续执行 >' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 补充输入弹窗 -->
+  <div v-if="answerModal" class="modal-bg" @click.self="answerModal=null">
+    <div class="modal">
+      <h2>&gt;_ 需要你的补充</h2>
+      <div class="question">{{ answerModal.pending_question || '// 没有具体问题, 直接告诉它该怎么继续' }}</div>
+      <textarea v-model="answerText" placeholder="把你的回答 / 补充信息贴进来…"></textarea>
+      <div class="actions">
+        <button class="ghost" @click="answerModal=null">取消</button>
+        <button class="primary" @click="submitAnswer">继续执行 &gt;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建项目弹窗 -->
+  <div v-if="createProjectModal" class="modal-bg" @click.self="createProjectModal=false">
+    <div class="modal">
+      <h2>&gt;_ 新建项目</h2>
+      <input v-model="newProject.name" placeholder="项目名 (如: 百度)" autofocus />
+      <input v-model="newProject.description" placeholder="描述 (可选)" />
+      <input v-model="newProject.default_prompt" placeholder="默认 prompt 模板，留空用全局默认" />
+      <textarea v-model="newProject.auth_payload" rows="3"
+        placeholder="认证数据 (可选, 在 prompt 里用 {auth} 引用)&#10;支持: Cookie / Bearer Token / 多 Header / 整段请求包"></textarea>
+      <div class="actions">
+        <button class="ghost" @click="createProjectModal=false">取消</button>
+        <button class="primary" @click="submitNewProject">创建 &gt;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 邮件设置弹窗 -->
+  <div v-if="mailModal" class="modal-bg" @click.self="closeMailSettings">
+    <div class="modal modal-wide">
+      <h2>&gt;_ 邮件通知设置 <span class="muted" style="font-size:12px;margin-left:10px">// 漏洞产出时自动发送</span></h2>
+      <div class="mail-form">
+        <label class="mail-toggle">
+          <input type="checkbox" v-model="mail.enabled" />
+          <span>启用邮件通知</span>
+          <span class="muted" style="font-size:11px;margin-left:8px">// 关闭后即使有漏洞也不发</span>
+        </label>
+
+        <div class="mail-grid">
+          <label>SMTP 服务器
+            <input v-model="mail.smtp_host" placeholder="smtp.qq.com / smtp.gmail.com / smtp.office365.com" />
+          </label>
+          <label>端口
+            <input type="number" v-model.number="mail.smtp_port" placeholder="465" />
+          </label>
+        </div>
+
+        <label class="mail-toggle">
+          <input type="checkbox" v-model="mail.use_ssl" />
+          <span>使用 SSL (465 端口)</span>
+          <span class="muted" style="font-size:11px;margin-left:8px">// 关闭则使用 STARTTLS (587)</span>
+        </label>
+
+        <div class="mail-grid">
+          <label>用户名
+            <input v-model="mail.username" placeholder="登录账号 (常常 = 发件邮箱)" />
+          </label>
+          <label>密码 / 授权码
+            <input type="password" v-model="mail.password"
+              :placeholder="mail.password_set ? '已保存 (留空保留旧值)' : '邮箱授权码'" />
+          </label>
+        </div>
+
+        <label>发件人地址
+          <input v-model="mail.from_addr" placeholder="alerts@yourdomain.com" />
+        </label>
+        <label>收件人 (多个用逗号或分号分隔)
+          <input v-model="mailToRaw" placeholder="you@example.com, ops@example.com" />
+        </label>
+
+        <div class="mail-grid">
+          <label class="mail-toggle">
+            <input type="checkbox" v-model="mail.notify_on_finding" />
+            <span>有漏洞产出时通知</span>
+          </label>
+          <label class="mail-toggle">
+            <input type="checkbox" v-model="mail.notify_on_failure" />
+            <span>任务失败时通知</span>
+          </label>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="ghost" @click="closeMailSettings">取消</button>
+        <button class="ghost" @click="testMail" :disabled="mailTesting">{{ mailTesting ? '发送中…' : '发测试邮件' }}</button>
+        <button class="primary" @click="saveMail" :disabled="mailSaving">{{ mailSaving ? '保存中…' : '保存设置 >' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改密码弹窗 -->
+  <div v-if="passwordModal" class="modal-bg" @click.self="closePasswordModal">
+    <div class="modal">
+      <h2>&gt;_ 修改登录密码</h2>
+      <div v-if="passwordIsDefault" class="muted" style="font-size:12px;color:var(--neon-yellow);text-shadow:0 0 6px var(--neon-yellow-glow);margin-bottom:8px">
+        // 当前仍在使用配置文件中的默认密码, 强烈建议修改
+      </div>
+      <label class="pwd-field">
+        <span>当前密码</span>
+        <input type="password" v-model="pwdForm.current" autocomplete="current-password" placeholder="输入当前登录密码" />
+      </label>
+      <label class="pwd-field">
+        <span>新密码 (≥ 6 位)</span>
+        <input type="password" v-model="pwdForm.next" autocomplete="new-password" placeholder="新密码" />
+      </label>
+      <label class="pwd-field">
+        <span>确认新密码</span>
+        <input type="password" v-model="pwdForm.confirm" autocomplete="new-password" placeholder="再次输入新密码"
+          @keyup.enter="submitPasswordChange" />
+      </label>
+      <div v-if="pwdError" class="pwd-error">{{ pwdError }}</div>
+      <div class="actions">
+        <button class="ghost" @click="closePasswordModal">取消</button>
+        <button class="primary" @click="submitPasswordChange" :disabled="pwdSaving">
+          {{ pwdSaving ? '提交中…' : '保存密码 >' }}
+        </button>
+      </div>
+    </div>
+  </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
