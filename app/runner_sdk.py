@@ -42,6 +42,7 @@ from claude_agent_sdk import (
     SystemMessage,
     TextBlock,
     ThinkingBlock,
+    ToolResultBlock,
     ToolUseBlock,
     UserMessage,
 )
@@ -501,25 +502,46 @@ async def _pump_messages(
         if isinstance(msg, UserMessage):
             if isinstance(msg.content, list):
                 for blk in msg.content:
-                    if not isinstance(blk, dict):
+                    # SDK 可能给 dict (老版本) 或 ToolResultBlock 对象 (新版本)
+                    # 两者都要处理, 否则 events 表里 tool_result 永远是空的,
+                    # 实时日志看不到工具结果 (历史 bug, 2026-06-09 修).
+                    is_tool_result = False
+                    tool_use_id = None
+                    is_error = False
+                    content = ""
+                    if isinstance(blk, ToolResultBlock):
+                        is_tool_result = True
+                        tool_use_id = getattr(blk, "tool_use_id", None)
+                        is_error = bool(getattr(blk, "is_error", False))
+                        content = getattr(blk, "content", "")
+                    elif isinstance(blk, dict) and blk.get("type") == "tool_result":
+                        is_tool_result = True
+                        tool_use_id = blk.get("tool_use_id")
+                        is_error = bool(blk.get("is_error"))
+                        content = blk.get("content", "")
+                    if not is_tool_result:
                         continue
-                    if blk.get("type") == "tool_result":
-                        c = blk.get("content", "")
-                        if isinstance(c, list):
-                            parts = []
-                            for x in c:
-                                if isinstance(x, dict) and x.get("type") == "text":
-                                    parts.append(x.get("text", ""))
-                            c = "\n".join(parts)
-                        if not isinstance(c, str):
-                            c = json.dumps(c, ensure_ascii=False)
-                        await _emit(
-                            task_id, "tool_result",
-                            {"tool_use_id": blk.get("tool_use_id"),
-                             "is_error": bool(blk.get("is_error")),
-                             "content": _truncate(c, 4000)},
-                            on_event,
-                        )
+                    # content 标准化: list[dict] → 拼接 text 字段; 其他 → str
+                    if isinstance(content, list):
+                        parts = []
+                        for x in content:
+                            if isinstance(x, dict) and x.get("type") == "text":
+                                parts.append(x.get("text", ""))
+                            elif isinstance(x, TextBlock):
+                                parts.append(getattr(x, "text", "") or "")
+                        content = "\n".join(parts)
+                    if not isinstance(content, str):
+                        try:
+                            content = json.dumps(content, ensure_ascii=False, default=str)
+                        except Exception:
+                            content = str(content)
+                    await _emit(
+                        task_id, "tool_result",
+                        {"tool_use_id": tool_use_id,
+                         "is_error": is_error,
+                         "content": _truncate(content, 4000)},
+                        on_event,
+                    )
             continue
 
         if isinstance(msg, ResultMessage):
