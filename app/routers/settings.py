@@ -19,8 +19,9 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 # 模型设置 key (app_settings 表)
 _MODEL_KEY = "current_model"
 
-# 可选模型清单 — 给前端下拉显示. 实际值由 packyapi 中转决定接受哪些 ID,
-# 这里给出常见 4.x 系列 + 默认空(让 SDK 走 claude_code preset). 用户可自己输入.
+# 可选模型清单 — 给前端下拉显示. 实际值由 ANTHROPIC_BASE_URL 端点决定接受哪些 ID,
+# 这里给出常见 Claude 4.x 系列 + GPT 5.x 系列 + 默认空(SDK 走 claude_code preset).
+# 用户可自己输入任意 ID, 此清单仅做下拉快捷选择.
 _MODEL_PRESETS = [
     {"id": "", "label": "默认(走 claude_code preset)"},
     {"id": "claude-opus-4-7[1M]", "label": "Opus 4.7 (1M ctx)"},
@@ -29,6 +30,8 @@ _MODEL_PRESETS = [
     {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6"},
     {"id": "claude-sonnet-4-7", "label": "Sonnet 4.7"},
     {"id": "claude-haiku-4-5", "label": "Haiku 4.5"},
+    {"id": "gpt-5.5", "label": "GPT-5.5"},
+    {"id": "gpt-5.4", "label": "GPT-5.4"},
 ]
 
 
