@@ -55,18 +55,23 @@ createApp({
         const presets = [];
         const hackSkill = skills.find(s => s.name === 'hack');
         if (hackSkill) {
-          presets.push({ label: '/hack {url} auto (推荐)', value: '/hack {url} auto' });
+          presets.push({
+            label: '/hack {url} auto (推荐)',
+            value: '/hack {url} auto',
+            title: hackSkill.description || '完整流水线全自动 (recon → js-audit → ... → report)',
+          });
         }
         // 所有 skill 按后端排序 (主流水线置顶 + 字母序)
+        // label 保持简洁 (只 /name {url}), description 放 title 让鼠标悬停看 — 下拉框不会被长描述撑爆
         for (const s of skills) {
-          // hack 简版紧跟 auto 版后
-          const label = s.description
-            ? `/${s.name} {url}  —  ${s.description.slice(0, 50)}`
-            : `/${s.name} {url}`;
-          presets.push({ label, value: `/${s.name} {url}` });
+          presets.push({
+            label: `/${s.name} {url}`,
+            value: `/${s.name} {url}`,
+            title: s.description || '',
+          });
         }
         // 自定义永远在末尾
-        presets.push({ label: '自定义 …', value: '' });
+        presets.push({ label: '自定义 …', value: '', title: '选这个后下方输入框可任意编辑' });
         PROMPT_PRESETS.value = presets;
       } catch (e) {
         // /api/skills 不存在或失败 → 保留 fallback, 不影响主流程

@@ -399,10 +399,11 @@
           placeholder="批量目标，每行一个&#10;https://example.com&#10;https://target.com/api"></textarea>
         <div class="row">
           <select v-model="promptPreset" @change="onPromptPresetChange"
-            style="flex:0 0 auto;min-width:200px">
-            <option v-for="p in PROMPT_PRESETS" :key="p.label" :value="p.value">{{ p.label }}</option>
+            :title="(PROMPT_PRESETS.find(p=>p.value===promptPreset) || {}).title || ''"
+            style="flex:0 0 220px;max-width:220px">
+            <option v-for="p in PROMPT_PRESETS" :key="p.label" :value="p.value" :title="p.title || ''">{{ p.label }}</option>
           </select>
-          <input v-model="prompt" placeholder="prompt 模板，{url} 会被替换 (可手改)" />
+          <input v-model="prompt" placeholder="prompt 模板，{url} 会被替换 (可手改)" style="flex:1;min-width:0" />
         </div>
       </div>
       <div class="actions">
