@@ -319,15 +319,18 @@ def build_task_claude_md(
     url: str,
     authz_text: str | None,
     is_miniprogram: bool = False,
+    auth_payload: str | None = None,
 ) -> str:
     """生成任务 workdir 下 CLAUDE.md 的全文.
 
     parts:
     1. 项目元信息 (project name + 目标 URL + 描述)
-    2. 授权范围 (来自 项目根/授权书.md, 可选)
-    3. 工具策略 — 按 is_miniprogram 选择:
-       - True: _CLAUDE_MD_TOOL_POLICY_MINIPROGRAM (无浏览器规则, 静态分析为主)
-       - False: _CLAUDE_MD_TOOL_POLICY (web 模式, 含浏览器门控)
+    2. **认证凭据 (auth_payload, 含 cookie / token / Authorization 等)** — 用户在
+       项目设置或新增项目时填写的凭据, 直接注入 CLAUDE.md, AI 启动时自动加载.
+       这避免了"prompt 模板必须含 {auth}/{cookies} 占位符" 的 bug — 默认 prompt
+       /hack {url} auto 不含占位符, 凭据会被静默丢弃.
+    3. 授权范围 (来自 项目根/授权书.md, 可选)
+    4. 工具策略 — 按 is_miniprogram 选择
     """
     if project:
         proj_meta_lines = [
@@ -339,6 +342,23 @@ def build_task_claude_md(
         proj_meta_lines = [f"目标URL: {url}"]
 
     parts: list[str] = ["\n".join(proj_meta_lines)]
+
+    # 认证凭据注入: 用户在 dashboard "项目认证数据" 文本框填的内容, 任意格式
+    # (cookie 串 / Authorization 头 / 自定义 header / token 等), AI 自行解析使用
+    if auth_payload and auth_payload.strip():
+        parts.append(
+            "# 认证凭据 (项目级, 由用户在 dashboard 提供)\n\n"
+            "以下是测试目标的认证凭据, 测试时请用这些凭据访问需要登录的接口. "
+            "格式由用户决定 (Cookie 串 / Authorization Bearer / 自定义 Header / "
+            "Token 等), 自行解析后用 browser_evaluate 注入到浏览器, 或在 curl/"
+            "Bash 请求时用对应 -H 头部.\n\n"
+            "```\n"
+            f"{auth_payload.strip()}\n"
+            "```\n\n"
+            "若凭据失效, 任务输出 `[NEEDS_USER_INPUT] 凭据失效, 请重新提供` "
+            "并暂停, 等待用户在 dashboard 更新."
+        )
+
     if authz_text:
         parts.append("# 授权范围 (必读, 严格遵守)")
         parts.append(authz_text)

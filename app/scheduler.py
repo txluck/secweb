@@ -49,7 +49,7 @@ def _build_in_scope_assets_block(
     设计原则:
       - 仅列出曾经被 dashboard 接受过的 hostname (历史任务) + 当前任务的 hostname
       - 不做 tld 归并 (不引入 publicsuffix 依赖, 不猜测域族归属)
-      - 同一 hostname 一行, 去重并排序, 输出形如 "### 当前任务\\n- `<hostname>`"
+      - 同一 hostname 一行, 去重并排序, 输出形如 "### 当前任务\\n- `oh.jd.com`"
       - 历史任务的 hostname 单独成段, 表示"本 dashboard 长期负责的资产范围"
       - project_id=None (无项目) 时仅列当前 URL, 不展开全 dashboard 历史,
         避免向 AI 暴露与本任务无关的资产(那会让 scope 自相矛盾,
@@ -279,6 +279,7 @@ class Scheduler:
                 claude_md_text = build_task_claude_md(
                     proj, url, authz_text,
                     is_miniprogram=is_miniprogram,
+                    auth_payload=auth_payload,
                 )
                 (workdir / "CLAUDE.md").write_text(claude_md_text, encoding="utf-8")
             except Exception:
