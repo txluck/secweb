@@ -338,6 +338,26 @@ async def delete_task(tid: str) -> None:
             c.execute("DELETE FROM tasks WHERE id=?", (tid,))
 
 
+# 活动状态: 这些状态的任务正在运行 / 等待中 / 等用户输入, 不能盲删
+_ACTIVE_STATUS = ("running", "queued", "needs_input", "paused", "awaiting_login")
+
+
+def list_deletable_task_ids(project_id: str | None) -> list[str]:
+    """返回项目下所有可安全删除的任务 ID (排除活动状态).
+
+    用途: 批量清空项目任务前先查清单, 给前端确认数量, 也避免删活动任务.
+    """
+    with _conn() as c:
+        placeholders = ",".join("?" * len(_ACTIVE_STATUS))
+        if project_id:
+            sql = f"SELECT id FROM tasks WHERE project_id=? AND status NOT IN ({placeholders})"
+            params = (project_id, *_ACTIVE_STATUS)
+        else:
+            sql = f"SELECT id FROM tasks WHERE project_id IS NULL AND status NOT IN ({placeholders})"
+            params = _ACTIVE_STATUS
+        return [r[0] for r in c.execute(sql, params)]
+
+
 # ---------- 事件 ----------
 
 async def add_event(task_id: str, kind: str, payload: str | dict) -> int:

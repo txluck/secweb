@@ -509,6 +509,27 @@ createApp({
       if (had && !urlsRaw.value) submitOpen.value = false;
     }
 
+    // 批量清空当前项目的非活动任务 (running/queued/needs_input 保留)
+    // 用例: 项目保留 (含授权 / 默认 prompt / 并发设置), 只清旧任务后重新提交
+    async function clearProjectTasks() {
+      const projName = currentProject.value?.name || '当前项目';
+      if (!confirm(`确认清空 [${projName}] 下所有非活动任务吗?\n\n` +
+                   `保留: running / queued / needs_input / paused / awaiting_login\n` +
+                   `删除: done / failed / stopped 等\n\n` +
+                   `项目本身和授权配置不会动. 此操作不可撤销.`)) {
+        return;
+      }
+      try {
+        const pid = currentProjectId.value;
+        const url = pid ? `/api/tasks?project_id=${encodeURIComponent(pid)}` : '/api/tasks';
+        const r = await fetchJSON(url, { method: 'DELETE' });
+        await loadTasks();
+        alert(`✅ 已清空 ${r.deleted} 个任务`);
+      } catch (e) {
+        alert('清空失败: ' + e.message);
+      }
+    }
+
     async function setConcurrency() {
       try {
         const r = await fetchJSON('/api/concurrency', {
@@ -973,7 +994,7 @@ createApp({
       depthCellLevel, depthLevel, depthLabel, bashClass,
       contractPct, contractLevel, contractLabel, contractMissingIds, contractItemHint,
       goHome, openProject,
-      selectTask, submitUrls, submitUrlsFromModal, setConcurrency, setProjectConcurrency, projectConcurrency,
+      selectTask, submitUrls, submitUrlsFromModal, clearProjectTasks, setConcurrency, setProjectConcurrency, projectConcurrency,
       cookieDraft, cookieDirty, saveCookies,
       stop, retry, del,
       logout, openAnswer, submitAnswer, loadReport, loadFiles,

@@ -155,6 +155,12 @@
           <span>新增目标</span>
           <span class="muted cta-hint">// {{ currentProject ? currentProject.name : '—' }} · 并发 {{ projectConcurrency || '—' }}</span>
         </button>
+        <button class="ghost"
+                style="margin-top:6px;width:100%;font-size:12px;padding:6px"
+                @click="clearProjectTasks"
+                :title="'清空当前项目下所有非活动任务 (running/queued/needs_input 保留). 项目本身和授权配置不动'">
+          🗑 清空已完成任务
+        </button>
       </div>
       <div class="filters">
         <span class="chip" :class="{active: filter==='all'}" @click="filter='all'">全部</span>

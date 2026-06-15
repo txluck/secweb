@@ -324,6 +324,29 @@ async def api_delete(tid: str):
     return {"ok": True}
 
 
+@router.delete("/api/tasks")
+async def api_delete_batch(project_id: Optional[str] = None):
+    """批量清空项目下任务. 默认跳过活动任务 (running/queued/needs_input/paused/awaiting_login).
+
+    用例: 项目保留 (含授权 / 默认 prompt / 并发设置), 只清旧任务后重新提交.
+    """
+    # 仅删可安全删除的, 活动任务保留
+    ids = store.list_deletable_task_ids(project_id)
+    deleted = 0
+    sched = get_scheduler()
+    for tid in ids:
+        try:
+            await sched.cleanup_task_daemon(tid)
+        except Exception:
+            pass
+        try:
+            await store.delete_task(tid)
+            deleted += 1
+        except Exception:
+            pass
+    return {"ok": True, "deleted": deleted, "total_candidates": len(ids)}
+
+
 @router.get("/api/tasks/{tid}/files")
 async def api_files(tid: str):
     t = store.get_task(tid)
