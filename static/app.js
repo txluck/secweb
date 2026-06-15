@@ -484,6 +484,9 @@ createApp({
           body: JSON.stringify({
             urls: urlsRaw.value, prompt: prompt.value,
             project_id: currentProjectId.value,
+            // 任务级 cookie/凭据: 仅这批任务用, 不污染项目其他任务.
+            // 留空时后端会用项目级 auth_payload 兜底.
+            auth_payload: cookieDraft.value || '',
           }),
         });
         urlsRaw.value = '';

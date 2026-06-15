@@ -226,15 +226,25 @@ class Scheduler:
         await self.set_default_concurrency(n)
 
     async def submit_urls(
-        self, urls: list[str], prompt_template: str, project_id: str | None = None,
+        self, urls: list[str], prompt_template: str,
+        project_id: str | None = None,
+        auth_payload: str | None = None,
     ) -> list[str]:
+        """提交一批目标. auth_payload 是本次提交的认证凭据 (cookie / token /
+        Header 任意格式), 仅这一批任务用. 留空时回退到项目级 project.auth_payload
+        作为兜底, 不影响其他批次任务.
+
+        bug 修复 (2026-06-15):
+        - 旧版只有项目级 auth_payload, 多次"新增目标"会互相覆盖项目设置
+        - 新版每个任务在 DB 存自己的 auth_payload, 任务级隔离, 重跑也用原 cookie
+        """
         ids: list[str] = []
-        # 项目级认证数据注入: 提交时一次性读取, 避免每个任务都查
-        auth_payload = ""
-        if project_id:
+        # 本次提交的 cookie (留空则用项目级兜底)
+        batch_auth = (auth_payload or "").strip()
+        if not batch_auth and project_id:
             proj = store.get_project(project_id)
             if proj:
-                auth_payload = (proj.get("auth_payload") or proj.get("cookies") or "").strip()
+                batch_auth = (proj.get("auth_payload") or proj.get("cookies") or "").strip()
         for url in urls:
             url = url.strip()
             if not url:
@@ -242,14 +252,15 @@ class Scheduler:
             prompt = (
                 prompt_template
                 .replace("{url}", url)
-                .replace("{auth}", auth_payload)
-                .replace("{cookies}", auth_payload)
+                .replace("{auth}", batch_auth)
+                .replace("{cookies}", batch_auth)
             )
             tid = await store.create_task(
                 url=url,
                 prompt=prompt,
                 workdir="",  # 占位, 下面更新
                 project_id=project_id,
+                auth_payload=batch_auth,  # 任务级保存, 重跑/resume 也用这份
             )
             # 项目下的任务跑在 runs/<project_id>/<task_id>/ ; 无项目则放 runs/_/<task_id>/
             sub = project_id or "_"
@@ -279,7 +290,7 @@ class Scheduler:
                 claude_md_text = build_task_claude_md(
                     proj, url, authz_text,
                     is_miniprogram=is_miniprogram,
-                    auth_payload=auth_payload,
+                    auth_payload=batch_auth,  # 用本批 cookie (含项目级兜底)
                 )
                 (workdir / "CLAUDE.md").write_text(claude_md_text, encoding="utf-8")
             except Exception:

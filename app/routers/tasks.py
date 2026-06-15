@@ -152,6 +152,9 @@ async def api_create_tasks(payload: dict):
     raw = (payload.get("urls") or "").strip()
     prompt = (payload.get("prompt") or CFG.default_prompt).strip()
     project_id = payload.get("project_id")
+    # 任务级 cookie/凭据 (本次"新增目标"提交时填的, 仅这批任务用, 不影响项目其他任务)
+    # 留空时 scheduler 自动用 project.auth_payload 兜底
+    auth_payload = (payload.get("auth_payload") or "").strip()
     if project_id and not store.get_project(project_id):
         raise HTTPException(400, "project not found")
     if "{url}" not in prompt:
@@ -168,7 +171,9 @@ async def api_create_tasks(payload: dict):
             invalid.append(u)
     if not valid:
         raise HTTPException(400, "no valid url")
-    ids = await get_scheduler().submit_urls(valid, prompt, project_id=project_id)
+    ids = await get_scheduler().submit_urls(
+        valid, prompt, project_id=project_id, auth_payload=auth_payload,
+    )
     return {"ok": True, "ids": ids, "skipped": invalid}
 
 

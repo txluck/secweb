@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     has_finding INTEGER DEFAULT 0,  -- 是否产出报告/漏洞
     workdir TEXT NOT NULL,          -- runs/<id>
     pid INTEGER,                    -- 当前 claude 进程 pid (运行中)
+    auth_payload TEXT DEFAULT '',   -- 任务级认证凭据 (cookie/token/Header), 留空则用 project.auth_payload 兜底
     mcp_calls INTEGER DEFAULT 0,           -- mcp__playwright__* 调用次数
     py_web_calls INTEGER DEFAULT 0,        -- Bash 内疑似 python/curl web 降级次数
     degraded_to_python INTEGER DEFAULT 0,  -- 1 = 该任务全程未用 playwright MCP
@@ -136,6 +137,9 @@ def init_db() -> None:
             ("contract_total", "ALTER TABLE tasks ADD COLUMN contract_total INTEGER DEFAULT 0"),
             ("contract_covered", "ALTER TABLE tasks ADD COLUMN contract_covered INTEGER DEFAULT 0"),
             ("contract_missing_json", "ALTER TABLE tasks ADD COLUMN contract_missing_json TEXT DEFAULT ''"),
+            # 任务级认证凭据 (cookie / token / Authorization 等). 每次"新增目标"
+            # 提交时存自己那批的 cookie, 互不影响; 留空则用 project.auth_payload 兜底
+            ("auth_payload", "ALTER TABLE tasks ADD COLUMN auth_payload TEXT DEFAULT ''"),
         ):
             if col not in cols:
                 c.execute(ddl)
@@ -249,15 +253,19 @@ async def delete_project(pid: str, cascade: bool = False) -> int:
 
 # ---------- 任务 ----------
 
-async def create_task(url: str, prompt: str, workdir: str, project_id: str | None = None) -> str:
+async def create_task(
+    url: str, prompt: str, workdir: str,
+    project_id: str | None = None, auth_payload: str = "",
+) -> str:
     tid = uuid.uuid4().hex[:12]
     sid = str(uuid.uuid4())  # claude --session-id 必须是 UUID
     async with _lock:
         with _conn() as c:
             c.execute(
-                "INSERT INTO tasks(id,project_id,url,prompt,status,session_id,created_at,workdir) "
-                "VALUES(?,?,?,?,?,?,?,?)",
-                (tid, project_id, url, prompt, "queued", sid, time.time(), workdir),
+                "INSERT INTO tasks(id,project_id,url,prompt,status,session_id,"
+                "created_at,workdir,auth_payload) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (tid, project_id, url, prompt, "queued", sid, time.time(), workdir, auth_payload),
             )
     return tid
 
