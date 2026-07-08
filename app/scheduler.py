@@ -42,6 +42,7 @@ def _hostname_of(u: str) -> str | None:
 def _build_in_scope_assets_block(
     current_url: str,
     project_id: str | None,
+    skill_name: str | None = None,
 ) -> str:
     """从当前 URL + 同 project 历史任务 URL 收集 hostname 集合,
     渲染成授权书占位符 {IN_SCOPE_ASSETS} 的资产清单 markdown.
@@ -71,7 +72,8 @@ def _build_in_scope_assets_block(
     lines: list[str] = []
     if cur_host:
         lines.append("### 当前任务目标")
-        lines.append(f"- `{cur_host}` (本次 /hack 指令的目标)")
+        skill_hint = f"/{skill_name}" if skill_name else "本次任务"
+        lines.append(f"- `{cur_host}` ({skill_hint} 指令的目标)")
         history_hosts.discard(cur_host)
 
     if history_hosts:
@@ -255,6 +257,12 @@ class Scheduler:
                 .replace("{auth}", batch_auth)
                 .replace("{cookies}", batch_auth)
             )
+            # 从 prompt 抽 slash command 作 skill_name, 用于 CLAUDE.md 元信息 + 授权块
+            try:
+                from .skill_contract import detect_slash_skill
+                task_skill_name = detect_slash_skill(prompt)
+            except Exception:
+                task_skill_name = None
             tid = await store.create_task(
                 url=url,
                 prompt=prompt,
@@ -280,7 +288,9 @@ class Scheduler:
                 # 避免授权书硬编码特定域族 (历史 bug: 5 份失败报告对应的目标必须
                 # 在授权书清单里 AI 才不拒绝, 但硬编码 = 新域族无效).
                 if authz_text and "{IN_SCOPE_ASSETS}" in authz_text:
-                    assets_block = _build_in_scope_assets_block(url, project_id)
+                    assets_block = _build_in_scope_assets_block(
+                        url, project_id, skill_name=task_skill_name,
+                    )
                     authz_text = authz_text.replace(
                         "{IN_SCOPE_ASSETS}", assets_block
                     )
@@ -291,6 +301,7 @@ class Scheduler:
                     proj, url, authz_text,
                     is_miniprogram=is_miniprogram,
                     auth_payload=batch_auth,  # 用本批 cookie (含项目级兜底)
+                    skill_name=task_skill_name,
                 )
                 (workdir / "CLAUDE.md").write_text(claude_md_text, encoding="utf-8")
             except Exception:

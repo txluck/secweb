@@ -303,8 +303,8 @@
             // 或手动:
             <code>cd {{ selected.workdir }} &amp;&amp; claude --resume {{ selected.session_id }}</code>
           </div>
-          <!-- 探索深度卡片 -->
-          <div class="depth-card">
+          <!-- 探索深度卡片 (仅在有 browser metrics 时显示 — web 类 skill 才有意义) -->
+          <div v-if="(selected.mcp_calls || 0) > 0 || (selected.nav_calls || 0) > 0 || (selected.interaction_calls || 0) > 0" class="depth-card">
             <div class="depth-head">
               探索深度
               <span class="grow"></span>
@@ -380,7 +380,7 @@
               ✓ 全部 {{ selected.contract_total }} 条契约都有显式声明
             </div>
             <div v-else class="muted" style="font-size:11px;margin-top:6px">
-              当前 prompt 未匹配到 skill 契约 (/hack /idor /sqli 等), 故跳过校验
+              当前 skill 未声明契约 (SKILL.md 里无"铁律 / MUST / 强制"标记)
             </div>
           </div>
           <pre style="white-space:pre-wrap">{{ JSON.stringify(selected, null, 2) }}</pre>

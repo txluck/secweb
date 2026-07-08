@@ -63,17 +63,30 @@ _SOFT_EXCLUDE_KEYWORDS = (
 
 
 def detect_slash_skill(prompt: str) -> str | None:
-    """从用户 prompt 里识别第一个 *已知* slash command, 返回对应 skill 目录名。
+    """从用户 prompt 里识别第一个 slash command, 返回对应 skill 目录名。
+
+    识别优先级 (v2.0 skill-agnostic):
+    1. 命令在 pipeline.json 的 command_to_skill 映射表 → 直接返回映射值
+    2. 命令不在映射表 → 检查 ~/.claude/skills/<cmd>/SKILL.md 是否存在, 存在就承认
+       (这样用户装的任何 skill 无需改代码即可被识别)
 
     防御: prompt 里常见路径片段 (/Users/.../ 授权书.md) 会被简单的"第一个 /xxx"
-    匹配错认成 /Users → users (不在映射表). 用 finditer 扫所有候选, 命中映射表即返回。
+    匹配错认成 /Users → users (SKILL.md 不存在, 会被兜底跳过). 用 finditer 扫所有
+    候选, 首个命中即返回。
     """
     if not prompt:
         return None
     for m in re.finditer(r"/([a-z][a-z\-]*)\b", prompt):
         cmd = m.group(1).lower()
+        # 1. 显式映射表
         if cmd in _COMMAND_TO_SKILL:
             return _COMMAND_TO_SKILL[cmd]
+        # 2. 动态兜底: ~/.claude/skills/<cmd>/SKILL.md 存在 = 承认这是个合法 skill
+        try:
+            if (_SKILLS_ROOT / cmd / "SKILL.md").is_file():
+                return cmd
+        except OSError:
+            continue
     return None
 
 

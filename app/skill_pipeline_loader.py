@@ -1,17 +1,17 @@
 """Skill pipeline 配置加载器 — 让用户只需放 pipeline.json 即可自定义 dashboard 行为.
 
-设计目标 (开源友好):
-- 用户导入自己的 skill 后, 不改 dashboard 代码即可让 hook 守卫识别新 skill
-- 默认 fallback 到内置配置 (= v1.0 当前的 hack 流水线), 零配置也能用
-- 多个 skill 套件可共存 (hack + red-team + 自定义), merge 时取并集 (最严格)
-- 用 stdlib JSON 不引入依赖 (相比 yaml 更严格 + 零安装)
+设计目标 (v2.0 skill-agnostic):
+- secweb 是通用调度器, 不假设任何 skill 名或流水线
+- 有 pipeline.json 的 skill (如 hack) → 加载其流水线, 走完整守卫
+- 无 pipeline.json 的 skill (如 prowl / 用户自建) → 走"零守卫轻量模式",
+  完全按 skill 自己的 SKILL.md / hooks 执行, secweb 只做通用底线 (授权 + 报告 + 中文)
+- 多套件可共存, merge 时取并集
 
 加载策略:
 1. 扫 ~/.claude/skills/<skill_name>/pipeline.json
 2. 找到的全部 merge 到一份运行时配置
-3. 没找到任何文件 → 用 BUILTIN_DEFAULTS (与 hack v1.0 流水线一致)
-
-启动一次扫描, 后续缓存到内存. hook 调用时 0 IO.
+3. 没找到任何文件 → 空配置 (无 phase / 无 stop_required / 无 command_map),
+   动态兜底靠 skill_contract.detect_slash_skill 扫 SKILL.md 存在性
 
 JSON schema (示例见 ~/.claude/skills/hack/pipeline.json):
 {
@@ -21,10 +21,9 @@ JSON schema (示例见 ~/.claude/skills/hack/pipeline.json):
   "stop_hook_soft_warn": [["xss"], ["open-redirect"]],
   "command_to_skill": {"hack": "hack", "recon": "recon", ...},
   "fuzz_families": {"sqli": {"min_families": 5, "families": {...}}, ...},
-  "shallow_ok_skills": ["retrospective", "secknowledge", "report"],
-  "soft_skill_in_layer3": false
+  "shallow_ok_skills": ["retrospective", "secknowledge", "report"]
 }
-所有字段都是可选, 缺哪个就 fallback 哪个的默认值.
+所有字段都是可选, 缺哪个就走空默认.
 """
 from __future__ import annotations
 
@@ -33,62 +32,17 @@ import os
 from pathlib import Path
 from typing import Any
 
-# ───── 内置默认值 (= v1.0 当前 hack 流水线) ───────────────────────
-# 用户不放任何 pipeline.json 时, 行为完全等同 v1.0.
-# 这份是"硬编码兜底", 同时也是 hack/pipeline.json 的来源 (我们会导出一份给用户参考).
+# ───── 内置默认值 (v2.0: 空 — skill-agnostic) ────────────────────
+# secweb 不再假设任何 skill 名或流水线.
+# 有 pipeline.json 的 skill (如 hack) → 加载其配置, 走完整守卫
+# 无 pipeline.json 的 skill → 空配置, secweb 只做通用底线 (report.md 落盘等)
+# 历史 (v1.x): 这里硬编码 hack 6 阶段流水线, 导致所有非 hack skill 被强套 hack 检查.
 
-_DEFAULT_PHASE_REQUIRED: dict[int, list[list[str]]] = {
-    0: [["recon"]],
-    1: [["js-audit", "miniprogram-audit"]],
-    2: [["auth-bypass"]],
-    3: [["sqli"]],
-    4: [["business-logic"]],
-    5: [["validate"], ["report"]],
-}
-
-_DEFAULT_PHASE_KEYWORDS: dict[int, tuple[str, ...]] = {
-    0: ("phase 0", "phase0", "侦察", "recon", "攻击面识别"),
-    1: ("phase 1", "phase1", "js审计", "js-audit", "miniprogram"),
-    2: ("phase 2", "phase2", "认证绕过", "auth-bypass", "越权", "idor"),
-    3: ("phase 3", "phase3", "sqli", "ssrf", "ssti", "xss",
-        "open-redirect", "重定向", "注入"),
-    4: ("phase 4", "phase4", "业务逻辑", "business-logic"),
-    5: ("phase 5", "phase5", "验证", "report", "报告"),
-}
-
-_DEFAULT_STOP_REQUIRED: list[list[str]] = [
-    ["recon"],
-    ["js-audit", "miniprogram-audit"],
-    ["auth-bypass"],
-    ["sqli"],
-    ["business-logic"],
-    ["validate"],
-    ["report"],
-]
-
-_DEFAULT_SOFT_WARN: list[list[str]] = [
-    ["xss"],
-    ["open-redirect"],
-]
-
-_DEFAULT_COMMAND_TO_SKILL: dict[str, str] = {
-    "hack": "hack",
-    "bug-bounty": "bug-bounty",
-    "recon": "recon",
-    "idor": "idor",
-    "sqli": "sqli",
-    "xss": "xss",
-    "ssrf": "ssrf",
-    "ssti": "ssti",
-    "open-redirect": "open-redirect",
-    "js-audit": "js-audit",
-    "auth-bypass": "auth-bypass",
-    "business-logic": "business-logic",
-    "known-cve": "known-cve",
-    "miniprogram-audit": "miniprogram-audit",
-    "pentest": "pentest",
-    "src-hunt": "src-hunt",
-}
+_DEFAULT_PHASE_REQUIRED: dict[int, list[list[str]]] = {}
+_DEFAULT_PHASE_KEYWORDS: dict[int, tuple[str, ...]] = {}
+_DEFAULT_STOP_REQUIRED: list[list[str]] = []
+_DEFAULT_SOFT_WARN: list[list[str]] = []
+_DEFAULT_COMMAND_TO_SKILL: dict[str, str] = {}
 
 _DEFAULT_SHALLOW_OK_SKILLS: set[str] = {"retrospective", "secknowledge", "report"}
 
@@ -234,45 +188,95 @@ def _merge_fuzz_families(configs: list[tuple[str, dict]]) -> dict[str, dict]:
 
 
 def _build() -> dict[str, Any]:
-    """整合用户配置 + 默认值 → 完整运行时配置."""
+    """整合用户配置 → 完整运行时配置.
+
+    v2.0 skill-agnostic:
+    - 默认全空. 无 pipeline.json = 零守卫轻量模式.
+    - 保留合并视图 (phase_required / stop_hook_required 等) 用于命令映射等通用需求
+    - 新增 per_skill dict, Layer 1/2 可用 state.skill_name 查自己 skill 的规则,
+      避免非当前 skill 的规则误伤 (如 prowl 任务命中 hack 的 phase_keywords)
+    """
     configs = _scan_user_configs()
 
-    # 没有任何 pipeline.json → 完全走默认 (= v1.0 当前行为)
+    # 无任何 pipeline.json → 全空默认
     if not configs:
         return {
-            "phase_required": dict(_DEFAULT_PHASE_REQUIRED),
-            "phase_keywords": dict(_DEFAULT_PHASE_KEYWORDS),
-            "stop_hook_required": list(_DEFAULT_STOP_REQUIRED),
-            "stop_hook_soft_warn": list(_DEFAULT_SOFT_WARN),
-            "command_to_skill": dict(_DEFAULT_COMMAND_TO_SKILL),
+            "phase_required": {},
+            "phase_keywords": {},
+            "stop_hook_required": [],
+            "stop_hook_soft_warn": [],
+            "command_to_skill": {},
             "shallow_ok_skills": set(_DEFAULT_SHALLOW_OK_SKILLS),
             "retrospective_keywords": set(_DEFAULT_RETRO_KEYWORDS),
             "fuzz_families_override": {},
+            "per_skill": {},
             "_source": "defaults",
             "_skills_loaded": [],
         }
 
-    # 有用户配置 → 用户字段覆盖默认; 缺失字段走默认
-    phase_required = _merge_phase_required(configs) or dict(_DEFAULT_PHASE_REQUIRED)
-    phase_keywords = _merge_phase_keywords(configs) or dict(_DEFAULT_PHASE_KEYWORDS)
-    stop_required = _merge_skill_list(configs, "stop_hook_required") or list(_DEFAULT_STOP_REQUIRED)
-    soft_warn = _merge_skill_list(configs, "stop_hook_soft_warn") or list(_DEFAULT_SOFT_WARN)
-    cmd_map = {**_DEFAULT_COMMAND_TO_SKILL, **_merge_command_map(configs)}
+    # 有用户配置 → 合并 (用于 command_map 等通用查询)
+    phase_required = _merge_phase_required(configs)
+    phase_keywords = _merge_phase_keywords(configs)
+    stop_required = _merge_skill_list(configs, "stop_hook_required")
+    soft_warn = _merge_skill_list(configs, "stop_hook_soft_warn")
+    cmd_map = _merge_command_map(configs)
     fuzz_override = _merge_fuzz_families(configs)
 
-    # shallow_ok_skills 合并: 默认 + 用户追加 (用户不能"减少"豁免, 防降级)
+    # shallow_ok_skills 合并: 默认 + 用户追加
     shallow_ok = set(_DEFAULT_SHALLOW_OK_SKILLS)
     for _, cfg in configs:
         extra = cfg.get("shallow_ok_skills_extra") or []
         if isinstance(extra, list):
             shallow_ok.update(str(x) for x in extra)
 
-    # retrospective 自查关键词合并: 默认 + 用户追加 (取并集, 不删默认 — 防降级)
+    # retrospective 关键词合并
     retro_kws = set(_DEFAULT_RETRO_KEYWORDS)
     for _, cfg in configs:
         extra = cfg.get("retrospective_keywords_extra") or []
         if isinstance(extra, list):
             retro_kws.update(str(x) for x in extra)
+
+    # per-skill 视图: {skill_name: {phase_required, phase_keywords, stop_hook_required, ...}}
+    # Layer 1/2 用当前 skill_name 查自己的规则, 避免跨 skill 污染
+    per_skill: dict[str, dict[str, Any]] = {}
+    for skill_name, cfg in configs:
+        skill_view: dict[str, Any] = {}
+        # phase_required: {int: [[str,...]]}
+        pr = cfg.get("phase_required") or {}
+        skill_pr: dict[int, list[list[str]]] = {}
+        for k, v in pr.items():
+            try:
+                phase = int(k)
+            except Exception:
+                continue
+            if isinstance(v, list):
+                skill_pr[phase] = [g for g in v if isinstance(g, list)]
+        if skill_pr:
+            skill_view["phase_required"] = skill_pr
+        # phase_keywords: {int: (str,...)}
+        pk = cfg.get("phase_keywords") or {}
+        skill_pk: dict[int, tuple[str, ...]] = {}
+        for k, v in pk.items():
+            try:
+                phase = int(k)
+            except Exception:
+                continue
+            if isinstance(v, list):
+                skill_pk[phase] = tuple(sorted(str(x) for x in v))
+        if skill_pk:
+            skill_view["phase_keywords"] = skill_pk
+        # stop_hook_required
+        sr = cfg.get("stop_hook_required") or []
+        skill_sr = [g for g in sr if isinstance(g, list)]
+        if skill_sr:
+            skill_view["stop_hook_required"] = skill_sr
+        # stop_hook_soft_warn
+        sw = cfg.get("stop_hook_soft_warn") or []
+        skill_sw = [g for g in sw if isinstance(g, list)]
+        if skill_sw:
+            skill_view["stop_hook_soft_warn"] = skill_sw
+        if skill_view:
+            per_skill[skill_name] = skill_view
 
     return {
         "phase_required": phase_required,
@@ -283,6 +287,7 @@ def _build() -> dict[str, Any]:
         "shallow_ok_skills": shallow_ok,
         "retrospective_keywords": retro_kws,
         "fuzz_families_override": fuzz_override,
+        "per_skill": per_skill,
         "_source": "user+defaults",
         "_skills_loaded": [name for name, _ in configs],
     }
@@ -304,27 +309,46 @@ def reload() -> dict[str, Any]:
 
 
 # ───── 公开接口 (其他模块用这些, 不直接读 _cache) ─────────────────
+# v2.0: 传 skill_name 走 per-skill 查询, 避免跨 skill 规则污染
 
-def required_skills_for_phase(phase: int) -> list[list[str]]:
-    return get_config()["phase_required"].get(phase, [])
+def required_skills_for_phase(phase: int, skill_name: str | None = None) -> list[list[str]]:
+    """指定 skill_name → 只查该 skill 的 phase_required; 不指定 → 全局合并."""
+    if skill_name:
+        ps = get_config().get("per_skill", {}).get(skill_name, {})
+        return list(ps.get("phase_required", {}).get(phase, []))
+    return list(get_config()["phase_required"].get(phase, []))
 
 
-def phase_for_todo(content: str) -> int | None:
+def phase_for_todo(content: str, skill_name: str | None = None) -> int | None:
+    """指定 skill_name → 只用该 skill 的 phase_keywords; 不指定 → 全局合并."""
     if not content:
         return None
     s = content.lower()
-    for phase, keys in get_config()["phase_keywords"].items():
+    if skill_name:
+        keywords = get_config().get("per_skill", {}).get(skill_name, {}).get("phase_keywords", {})
+    else:
+        keywords = get_config()["phase_keywords"]
+    for phase, keys in keywords.items():
         for k in keys:
             if k in s:
                 return phase
     return None
 
 
-def hack_must_have_either() -> list[list[str]]:
+def hack_must_have_either(skill_name: str | None = None) -> list[list[str]]:
+    """指定 skill_name → 只查该 skill 的 stop_hook_required; 不指定 → 全局合并.
+    函数名 hack_* 是 legacy, 语义已通用化 (读 pipeline.json.stop_hook_required)."""
+    if skill_name:
+        ps = get_config().get("per_skill", {}).get(skill_name, {})
+        return [list(g) for g in ps.get("stop_hook_required", [])]
     return list(get_config()["stop_hook_required"])
 
 
-def hack_soft_warn() -> list[list[str]]:
+def hack_soft_warn(skill_name: str | None = None) -> list[list[str]]:
+    """同上, 但取 stop_hook_soft_warn."""
+    if skill_name:
+        ps = get_config().get("per_skill", {}).get(skill_name, {})
+        return [list(g) for g in ps.get("stop_hook_soft_warn", [])]
     return list(get_config()["stop_hook_soft_warn"])
 
 

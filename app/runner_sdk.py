@@ -7,14 +7,18 @@
   自递归 run_task)
 - 同一 ClaudeSDKClient 复用 (playwright MCP 浏览器全程不掉, followup 也在同 client 上 query)
 
-行为零回归 (与 v1.x runner.py 对比):
-- 6 层守卫 (Layer 1/2/3/4/5/6) — 通过 guard_state.check_* + state 更新保留
-- SPA 探索深度阈值 (case_b) — metrics.is_browser_shallow() 替代
-- 契约执行 (case_c) — skill_contract.parse_report_contract_status 保留
-- Phase 审计 (case_d) — guard_state.audit_phases 替代 phase_audit.audit
-- degraded 紫标 — metrics.is_degraded() + state.fuzz_shallow / soft_skipped / retro_shallow
+v2.0 skill-agnostic 守卫 (对比 v1.x):
+- Layer 1 TodoWrite phase 校验 — guard_state.check_pretool_todowrite (由 pipeline.json 驱动)
+- Layer 2 Stop 必经 skill — guard_state.check_stop (由 pipeline.json 驱动)
+- report.md 落盘校验 — check_stop 内, 通用
+- SPA 探索深度阈值 — metrics.is_browser_shallow() 保留 (仅在有 browser metrics 时展示)
+- 契约执行 — skill_contract.parse_report_contract_status 保留
+- Phase 审计 — guard_state.audit_phases (通用, pipeline.json 驱动)
+- degraded 紫标 — metrics.is_degraded() + state.soft_skipped 保留
 - 中文报告检测 — _scan_report_lang() 保留
 - 邮件通知 — finalize 末尾保留
+- 已删除: Layer 3 (shallow Skill) / Layer 4 (fuzz 家族) / Layer 5 (端点覆盖) / Layer 6 (retrospective) —
+  这些是 hack 专属的具体规则, 应写在 hack/SKILL.md 或 hack/hooks/, 不该硬编码在 secweb
 
 不再保留 (SDK in-process 模式天然不需要):
 - silence_watchdog (没有 stdout pipe 卡死场景, SDK 直连 anthropic)
@@ -55,7 +59,6 @@ from .guard_state import (
     Block,
     audit_phases,
     build_phase_skip_nudge,
-    check_pretool_skill,
     check_pretool_todowrite,
     check_stop,
     decision_to_sdk_pretool,
@@ -364,12 +367,11 @@ def _make_hooks(state: GuardState, on_event: EventCB | None) -> dict:
         }
         if tool_name == "TodoWrite":
             return decision_to_sdk_pretool(check_pretool_todowrite(payload, state))
-        if tool_name == "Skill":
-            return decision_to_sdk_pretool(check_pretool_skill(payload, state))
+        # v2.0: Layer 3 (shallow Skill) 已删除, Skill 工具直接放行
         return {}
 
     async def stop_check(input_data: dict, tool_use_id, ctx):
-        """Stop: Layer 2 + 5 + 6 + report-file 硬校验."""
+        """Stop: Layer 2 + report-file 硬校验 (v2.0 已删除 Layer 5/6)."""
         payload = {
             "hook_event_name": "Stop",
             "cwd": input_data.get("cwd"),
@@ -1041,16 +1043,7 @@ async def _finalize(
             on_event,
         )
 
-    # Layer 4 fuzz 浅紫标
-    if state.fuzz_shallow:
-        degraded = True
-        await _emit(
-            task_id, "system",
-            {"event": "fuzz_shallow", "msg": state.fuzz_shallow[:300]},
-            on_event,
-        )
-
-    # 软警告 skill 缺失紫标
+    # 软警告 skill 缺失紫标 (pipeline.json.stop_hook_soft_warn 声明的可选 skill 未调)
     if state.soft_skipped:
         degraded = True
         skipped = ",".join(state.soft_skipped)
@@ -1058,16 +1051,7 @@ async def _finalize(
             task_id, "system",
             {"event": "skill_skipped_soft",
              "skipped": skipped,
-             "msg": f"hack 模式可选 skill 未调起: {skipped} — 检查目标是否需要补测"},
-            on_event,
-        )
-
-    # Layer 6 retrospective 浅紫标
-    if state.retro_shallow:
-        degraded = True
-        await _emit(
-            task_id, "system",
-            {"event": "retrospective_shallow", "msg": state.retro_shallow[:300]},
+             "msg": f"pipeline 声明的可选 skill 未调起: {skipped} — 检查目标是否需要补测"},
             on_event,
         )
 

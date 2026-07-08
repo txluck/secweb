@@ -25,11 +25,11 @@
 
 | 维度 | secweb 的做法 |
 |---|---|
-| 🤖 **AI 驱动** | 基于 Claude Agent SDK + 用户自定义 skill, 每个目标走完整渗透流水线 (recon → js-audit → auth-bypass → idor → sqli → ssrf → ssti → business-logic → validate → report) |
+| 🤖 **AI 驱动** | 基于 Claude Agent SDK + 用户自定义 skill, 每个目标按 skill 自己声明的流水线执行 (示例 `/hack` 走 recon → js-audit → auth-bypass → idor → sqli → ...; **v2.0 skill-agnostic**, 也支持任意其他 skill) |
 | 🎯 **多目标并发** | asyncio.Semaphore 项目级并发控制, 一次提交批量目标, 自动排队 / 调度 / 续跑 |
 | 🪜 **动态 skill 加载** | 自动扫描 `~/.claude/skills/` 填充提示词预设, 加新 skill 刷新即生效, 0 改前端代码 |
 | 📱 **小程序模式自适应** | 检测本地反编译目录自动切换专用 rule (无浏览器规则, 静态分析为主) |
-| 🔒 **多层防护机制** | 6 层 hook 守卫 + 启动断言 + 横向扩展兜底, 防 AI 走捷径 / 编借口 / 漏测 |
+| 🔒 **通用守卫层** | 通用 hook 守卫 (TodoWrite phase 校验 / Stop 必经 skill / report.md 落盘) 由当前 skill 的 `pipeline.json` 驱动. 无 pipeline.json 的 skill 走零守卫轻量模式, 让 skill 自己的 `hooks/` 生效. |
 | 📡 **实时观测** | WebSocket 推送 claude 思考流 + 工具调用流, 报告 / 产物 / 元数据 4 视图分离 |
 | 🔄 **断点续跑** | 同 task_id 多次补充输入用同一 session_id, 上下文不丢, 浏览器 / 凭证 / cookie 全保留 |
 | 📜 **可逆写操作** | 内置写操作测试底线 (create 用 secweb_test_ 标识 / delete 仅删自己创建的对象), 防污染生产数据 |

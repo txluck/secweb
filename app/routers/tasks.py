@@ -25,7 +25,7 @@ _SKILLS_CACHE_TTL = 30.0  # 秒
 _SKILLS_DIR = Path.home() / ".claude" / "skills"
 
 # 主流水线 skill 置顶顺序 (其他按字母序)
-_SKILL_PIN_ORDER = ["hack", "bug-bounty", "src-hunt", "pentest"]
+# v2.0: skill 按字母序返回, 不再硬编码"主流水线"清单 (原 _SKILL_PIN_ORDER 已删除)
 
 
 def _parse_skill_frontmatter(skill_md: Path) -> dict | None:
@@ -100,17 +100,8 @@ def _load_skills_list(force: bool = False) -> list[dict]:
     except OSError:
         pass
 
-    # 主流水线置顶 + 其他字母序
-    pin_set = set(_SKILL_PIN_ORDER)
-    pinned = sorted(
-        (s for s in skills if s["name"] in pin_set),
-        key=lambda s: _SKILL_PIN_ORDER.index(s["name"]),
-    )
-    others = sorted(
-        (s for s in skills if s["name"] not in pin_set),
-        key=lambda s: s["name"],
-    )
-    _SKILLS_CACHE = pinned + others
+    # v2.0: 按字母序返回, 不再假设"主流水线"清单
+    _SKILLS_CACHE = sorted(skills, key=lambda s: s["name"])
     _SKILLS_CACHE_TS = now
     return _SKILLS_CACHE
 
