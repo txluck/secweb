@@ -140,6 +140,11 @@ def init_db() -> None:
             # 任务级认证凭据 (cookie / token / Authorization 等). 每次"新增目标"
             # 提交时存自己那批的 cookie, 互不影响; 留空则用 project.auth_payload 兜底
             ("auth_payload", "ALTER TABLE tasks ADD COLUMN auth_payload TEXT DEFAULT ''"),
+            # 重跑计数 & 最后一次重跑时间. scheduler.retry_task 里 +1
+            # (覆盖 /retry fresh=True 和 /resume-rerun fresh=False 两条路径).
+            # UI 用 rerun_count > 0 判断是否显示"↻N 重跑"徽章.
+            ("rerun_count", "ALTER TABLE tasks ADD COLUMN rerun_count INTEGER DEFAULT 0"),
+            ("last_rerun_at", "ALTER TABLE tasks ADD COLUMN last_rerun_at REAL"),
         ):
             if col not in cols:
                 c.execute(ddl)

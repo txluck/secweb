@@ -45,8 +45,14 @@
         <option v-for="m in modelPresets" :key="m.id" :value="m.id">{{ m.label }}</option>
       </select>
     </div>
+    <button class="nav-btn nav-settings" @click="openSystemSettings" title="系统设置 (子进程 TEMP 目录等)">
+      <span class="nav-ico">⚙</span><span>系统</span>
+    </button>
+    <button class="nav-btn nav-settings" @click="openEnvSettings" title="编辑 .env 文件 (需重启生效, 热配置除外)">
+      <span class="nav-ico">📝</span><span>.env</span>
+    </button>
     <button class="nav-btn nav-settings" @click="openMailSettings" title="邮件通知设置">
-      <span class="nav-ico">⚙</span><span>邮件</span>
+      <span class="nav-ico">✉</span><span>邮件</span>
     </button>
     <button class="nav-btn nav-pwd" @click="openPasswordModal" title="修改登录密码">
       <span class="nav-ico">🔑</span><span>密码</span>
@@ -168,6 +174,7 @@
         <span class="chip" :class="{active: filter==='needs_input'}" @click="filter='needs_input'">待补充</span>
         <span class="chip" :class="{active: filter==='done'}" @click="filter='done'">完成</span>
         <span class="chip" :class="{active: filter==='findings'}" @click="filter='findings'">有发现</span>
+        <span class="chip" :class="{active: filter==='rerun'}" @click="filter='rerun'">已重跑</span>
         <span class="chip" :class="{active: filter==='failed'}" @click="filter='failed'">失败</span>
         <span class="chip" :class="{active: filter==='stopped'}" @click="filter='stopped'">停止</span>
       </div>
@@ -179,6 +186,10 @@
           <div class="meta">
             <span class="badge" :class="t.status">{{ statusLabel(t.status) }}</span>
             <span v-if="t.has_finding" class="badge finding">发现</span>
+            <span v-if="(t.rerun_count || 0) > 0" class="badge rerun"
+              :title="'已重跑 ' + t.rerun_count + ' 次, 最后一次于 ' + formatTime(t.last_rerun_at)">
+              ↻{{ t.rerun_count }}
+            </span>
             <span v-if="t.degraded_to_python" class="badge degraded" title="本任务 playwright MCP 浏览器调用偏少, 大概率漏测了 IDOR / XSS / CSRF / 业务逻辑 / SPA-only 这类只能在真实浏览器里看到的问题, 建议人工复测">⚠ 可能漏测</span>
             <span class="muted">{{ formatTime(t.created_at) }}</span>
           </div>
@@ -195,6 +206,10 @@
         <span class="url">{{ selected.url }}</span>
         <span class="badge" :class="selected.status">{{ statusLabel(selected.status) }}</span>
         <span v-if="selected.has_finding" class="badge finding">有发现</span>
+        <span v-if="(selected.rerun_count || 0) > 0" class="badge rerun"
+          :title="'已重跑 ' + selected.rerun_count + ' 次, 最后一次于 ' + formatTime(selected.last_rerun_at)">
+          ↻ 第 {{ selected.rerun_count }} 次重跑
+        </span>
         <span v-if="selected.degraded_to_python" class="badge degraded" title="playwright MCP 调用偏少, 任务被诱导成 curl 路线, 可能漏测 IDOR / XSS / CSRF / 业务逻辑 / SPA-only 路由">⚠ 可能漏测</span>
         <div class="actions">
           <button v-if="selected.status==='needs_input'" class="primary" @click="openAnswer(selected)">&gt; 补充输入</button>
@@ -462,6 +477,67 @@
       <div class="actions">
         <button class="ghost" @click="createProjectModal=false">取消</button>
         <button class="primary" @click="submitNewProject">创建 &gt;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系统设置弹窗 -->
+  <div v-if="systemModal" class="modal-bg" @click.self="closeSystemSettings">
+    <div class="modal">
+      <h2>&gt;_ 系统设置</h2>
+      <label class="pwd-field">
+        <span>子进程 TEMP 目录 <span class="muted" style="font-size:11px">// 留空 = 用系统默认</span></span>
+        <input v-model="systemForm.temp_dir"
+          :placeholder="systemForm.env_default || '例: C:\\secweb_tmp 或 /tmp/secweb'" />
+      </label>
+      <div class="muted" style="font-size:11px;line-height:1.6;margin-top:6px">
+        // 场景: Windows 用户名含 unicode 字符 (如 U+2018 单引号 ‘) 时,<br/>
+        // 默认 %TEMP% 路径污染 PowerShell/curl.exe/python 命令解析,<br/>
+        // 填一个纯 ASCII 路径 (会自动 mkdir) 让 claude 子进程走干净目录.<br/>
+        // 仅新任务生效, 在跑任务不切.
+      </div>
+      <div v-if="systemForm.env_default" class="muted" style="font-size:11px;margin-top:6px">
+        // .env 兜底: <b>{{ systemForm.env_default }}</b> (DB 值优先, 留空回退到此)
+      </div>
+      <div class="actions">
+        <button class="ghost" @click="closeSystemSettings">取消</button>
+        <button class="primary" @click="saveSystemSettings" :disabled="systemSaving">
+          {{ systemSaving ? '保存中…' : '保存设置 >' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- .env 文件编辑器 -->
+  <div v-if="envModal" class="modal-bg" @click.self="closeEnvSettings">
+    <div class="modal modal-wide">
+      <h2>&gt;_ 编辑 .env
+        <span class="muted" style="font-size:12px;margin-left:10px">
+          // {{ envForm.path }}
+        </span>
+      </h2>
+      <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:8px">
+        // ⚠ 冷配置 (HOST/PORT/PASSWORD/CONCURRENCY/CLAUDE_BIN 等) 保存后需<b style="color:var(--neon-yellow)">重启服务</b>才生效.<br/>
+        // ✔ 热配置 (ANTHROPIC_BASE_URL / AUTH_TOKEN / MODEL / SECWEB_TEMP_DIR) 保存即时生效 (走 os.environ fallback).<br/>
+        // ✔ 保存前自动备份到 <b>.env.bak</b>.
+      </div>
+      <textarea v-model="envForm.content" class="env-editor" spellcheck="false"
+        placeholder="# KEY=VALUE, 每行一条, # 开头为注释"></textarea>
+      <div v-if="envForm.last_hot_applied.length || envForm.last_restart_required.length"
+        class="muted" style="font-size:11px;margin-top:6px;line-height:1.6">
+        <div v-if="envForm.last_hot_applied.length">
+          // ✔ 已生效热配置: <b style="color:var(--neon-green)">{{ envForm.last_hot_applied.join(', ') }}</b>
+        </div>
+        <div v-if="envForm.last_restart_required.length">
+          // ⚠ 需重启才生效: <b style="color:var(--neon-yellow)">{{ envForm.last_restart_required.join(', ') }}</b>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="ghost" @click="closeEnvSettings">取消</button>
+        <button class="ghost" @click="reloadEnvSettings" :disabled="envSaving">重新加载</button>
+        <button class="primary" @click="saveEnvSettings" :disabled="envSaving">
+          {{ envSaving ? '保存中…' : '保存 .env >' }}
+        </button>
       </div>
     </div>
   </div>

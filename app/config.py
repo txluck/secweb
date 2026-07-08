@@ -65,6 +65,10 @@ class Config:
     anthropic_base_url: str
     anthropic_auth_token: str
     anthropic_model: str
+    # 子进程 TEMP 目录 (Windows U+2018 等 unicode 用户名污染 %USERPROFILE% 时,
+    # 默认 %TEMP% 路径会导致 PowerShell/curl.exe 命令解析失败).
+    # 留空 = 用系统默认. SDK env 注入见 runner_sdk._build_sdk_options.
+    temp_dir: str
 
     @classmethod
     def load(cls) -> "Config":
@@ -90,6 +94,7 @@ class Config:
             anthropic_base_url=os.environ.get("ANTHROPIC_BASE_URL", ""),
             anthropic_auth_token=os.environ.get("ANTHROPIC_AUTH_TOKEN", ""),
             anthropic_model=os.environ.get("ANTHROPIC_MODEL", ""),
+            temp_dir=os.environ.get("SECWEB_TEMP_DIR", ""),
         )
 
     def export_anthropic_env(self) -> None:

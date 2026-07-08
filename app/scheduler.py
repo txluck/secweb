@@ -358,7 +358,11 @@ class Scheduler:
 
     async def retry_task(self, tid: str, fresh: bool = True) -> bool:
         """重跑任务. fresh=True (默认) 用新 session_id 全新开始;
-        fresh=False 沿用原 session_id (适合从 needs_input 之外的失败处续上下文)."""
+        fresh=False 沿用原 session_id (适合从 needs_input 之外的失败处续上下文).
+
+        每次调用累加 rerun_count + 刷 last_rerun_at, UI 据此显示 "↻N 重跑" 徽章.
+        fresh / resume 两条路径都算 (对用户来说都是"非原始运行").
+        """
         t = store.get_task(tid)
         if not t:
             return False
@@ -367,6 +371,8 @@ class Scheduler:
         fields: dict = dict(
             status="queued", pending_question=None,
             exit_code=None, finished_at=None,
+            rerun_count=int(t.get("rerun_count") or 0) + 1,
+            last_rerun_at=time.time(),
         )
         if fresh:
             import uuid as _uuid

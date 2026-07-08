@@ -105,6 +105,17 @@ createApp({
     const nowTick = ref(Date.now());
     setInterval(() => { nowTick.value = Date.now(); }, 1000);
     const createProjectModal = ref(false);
+    // 系统设置 (TEMP 目录等)
+    const systemModal = ref(false);
+    const systemSaving = ref(false);
+    const systemForm = reactive({ temp_dir: '', env_default: '' });
+    // .env 文件编辑器
+    const envModal = ref(false);
+    const envSaving = ref(false);
+    const envForm = reactive({
+      content: '', path: '', exists: false, hot_keys: [],
+      last_hot_applied: [], last_restart_required: [],
+    });
     // 邮件设置
     const mailModal = ref(false);
     const mailSaving = ref(false);
@@ -146,6 +157,7 @@ createApp({
     const filteredTasks = computed(() => {
       if (filter.value === 'all') return tasks.value;
       if (filter.value === 'findings') return tasks.value.filter(t => t.has_finding);
+      if (filter.value === 'rerun') return tasks.value.filter(t => (t.rerun_count || 0) > 0);
       return tasks.value.filter(t => t.status === filter.value);
     });
 
@@ -603,6 +615,99 @@ createApp({
       location.href = '/login';
     }
 
+    // ---------- 系统设置 ----------
+
+    async function openSystemSettings() {
+      try {
+        const cfg = await fetchJSON('/api/settings/temp_dir');
+        systemForm.temp_dir = cfg.current || '';
+        systemForm.env_default = cfg.env_default || '';
+      } catch (e) {
+        systemForm.temp_dir = '';
+        systemForm.env_default = '';
+      }
+      systemModal.value = true;
+    }
+    function closeSystemSettings() { systemModal.value = false; }
+
+    async function saveSystemSettings() {
+      systemSaving.value = true;
+      try {
+        const r = await fetchJSON('/api/settings/temp_dir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ temp_dir: systemForm.temp_dir }),
+        });
+        systemForm.temp_dir = r.current || '';
+        closeSystemSettings();
+      } catch (e) {
+        alert('保存失败: ' + e.message);
+      } finally {
+        systemSaving.value = false;
+      }
+    }
+
+    // ---------- .env 文件编辑器 ----------
+
+    async function _fetchEnv() {
+      const r = await fetchJSON('/api/settings/env');
+      envForm.content = r.content || '';
+      envForm.path = r.path || '';
+      envForm.exists = !!r.exists;
+      envForm.hot_keys = r.hot_keys || [];
+    }
+
+    async function openEnvSettings() {
+      envForm.last_hot_applied = [];
+      envForm.last_restart_required = [];
+      try {
+        await _fetchEnv();
+      } catch (e) {
+        alert('加载 .env 失败: ' + e.message);
+        return;
+      }
+      envModal.value = true;
+    }
+    function closeEnvSettings() { envModal.value = false; }
+
+    async function reloadEnvSettings() {
+      try {
+        await _fetchEnv();
+        envForm.last_hot_applied = [];
+        envForm.last_restart_required = [];
+      } catch (e) {
+        alert('重新加载失败: ' + e.message);
+      }
+    }
+
+    async function saveEnvSettings() {
+      envSaving.value = true;
+      try {
+        const r = await fetchJSON('/api/settings/env', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: envForm.content }),
+        });
+        envForm.content = r.content || '';
+        envForm.last_hot_applied = r.hot_applied || [];
+        envForm.last_restart_required = r.restart_required || [];
+        if (envForm.last_restart_required.length) {
+          alert(
+            '已保存, 但以下 key 属冷配置, 需重启服务才生效:\n\n  ' +
+            envForm.last_restart_required.join(', ')
+          );
+        } else if (envForm.last_hot_applied.length) {
+          closeEnvSettings();
+        } else {
+          closeEnvSettings();
+        }
+      } catch (e) {
+        alert('保存失败: ' + e.message);
+      } finally {
+        envSaving.value = false;
+      }
+    }
+
     // ---------- 邮件设置 ----------
 
     async function openMailSettings() {
@@ -1003,6 +1108,10 @@ createApp({
       openCreateProject, submitNewProject, confirmDeleteProject,
       mailModal, mail, mailToRaw, mailSaving, mailTesting,
       openMailSettings, closeMailSettings, saveMail, testMail,
+      systemModal, systemForm, systemSaving,
+      openSystemSettings, closeSystemSettings, saveSystemSettings,
+      envModal, envForm, envSaving,
+      openEnvSettings, closeEnvSettings, saveEnvSettings, reloadEnvSettings,
       currentModel, modelPresets, onModelChange,
       passwordModal, passwordIsDefault, pwdForm, pwdSaving, pwdError,
       openPasswordModal, closePasswordModal, submitPasswordChange,

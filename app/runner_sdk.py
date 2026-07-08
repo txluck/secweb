@@ -434,6 +434,23 @@ def _build_sdk_options(state: GuardState, task: dict, resume: bool) -> ClaudeAge
     if model:
         sdk_opts["model"] = model
 
+    # 子进程 TEMP 目录注入 (Windows U+2018 场景). 优先级 DB > env, 留空跳过.
+    # SDK 的 ClaudeAgentOptions.env 会覆盖到 claude CLI 子进程, 顺链传给 shell 工具.
+    temp_dir = ""
+    try:
+        from .routers.settings import get_current_temp_dir
+        temp_dir = get_current_temp_dir()
+    except Exception:
+        temp_dir = os.environ.get("SECWEB_TEMP_DIR", "")
+    if temp_dir:
+        try:
+            from pathlib import Path
+            Path(temp_dir).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # 目录创建失败也不阻塞任务, 让子进程自己报错更明显
+            pass
+        sdk_opts["env"] = {"TEMP": temp_dir, "TMP": temp_dir, "TMPDIR": temp_dir}
+
     return ClaudeAgentOptions(
         **{k: v for k, v in sdk_opts.items() if v is not None}
     )
