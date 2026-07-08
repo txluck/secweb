@@ -20,13 +20,13 @@
     <button v-if="route==='home'" class="nav-btn nav-reports" @click="goReports" title="所有报告">
       <span class="nav-ico">▤</span><span>报告库</span>
     </button>
-    <span v-if="route==='detail' && currentProject" class="crumb">
+    <div v-if="route==='detail' && currentProject" class="crumb">
       <span class="muted">::</span>
-      <span class="crumb-name">{{ currentProject.name }}</span>
-      <button class="nav-btn nav-reports" style="margin-left:10px" @click="goProjectReports">
+      <span class="crumb-name" :title="currentProject.name">{{ currentProject.name }}</span>
+      <button class="nav-btn nav-reports" @click="goProjectReports">
         <span class="nav-ico">▤</span><span>报告库</span>
       </button>
-    </span>
+    </div>
     <div class="stats" v-if="route==='detail'">
       <span>排队<b>{{ stats.queued || 0 }}</b></span>
       <span>运行<b style="color:var(--neon-cyan)">{{ stats.running || 0 }}</b></span>
@@ -45,18 +45,31 @@
         <option v-for="m in modelPresets" :key="m.id" :value="m.id">{{ m.label }}</option>
       </select>
     </div>
-    <button class="nav-btn nav-settings" @click="openSystemSettings" title="系统设置 (子进程 TEMP 目录等)">
-      <span class="nav-ico">⚙</span><span>系统</span>
-    </button>
-    <button class="nav-btn nav-settings" @click="openEnvSettings" title="编辑 .env 文件 (需重启生效, 热配置除外)">
-      <span class="nav-ico">📝</span><span>.env</span>
-    </button>
-    <button class="nav-btn nav-settings" @click="openMailSettings" title="邮件通知设置">
-      <span class="nav-ico">✉</span><span>邮件</span>
-    </button>
-    <button class="nav-btn nav-pwd" @click="openPasswordModal" title="修改登录密码">
-      <span class="nav-ico">🔑</span><span>密码</span>
-    </button>
+    <div class="nav-settings-group" @click.stop>
+      <button class="nav-btn nav-settings" @click="settingsMenuOpen = !settingsMenuOpen"
+        :class="{active: settingsMenuOpen}" title="设置">
+        <span class="nav-ico">⚙</span><span>设置</span>
+        <span class="nav-caret">▾</span>
+      </button>
+      <div class="settings-dropdown" v-if="settingsMenuOpen">
+        <button @click="openSystemSettings(); settingsMenuOpen=false"
+          title="子进程 TEMP 目录等热配置">
+          <span class="nav-ico">⚙</span><span>系统路径设置</span>
+        </button>
+        <button @click="openEnvSettings(); settingsMenuOpen=false"
+          title="编辑 .env 文件 (需重启生效, 热配置除外)">
+          <span class="nav-ico">📝</span><span>.env 编辑</span>
+        </button>
+        <button @click="openMailSettings(); settingsMenuOpen=false"
+          title="邮件通知设置">
+          <span class="nav-ico">✉</span><span>邮件通知</span>
+        </button>
+        <button @click="openPasswordModal(); settingsMenuOpen=false"
+          title="修改登录密码">
+          <span class="nav-ico">🔑</span><span>修改密码</span>
+        </button>
+      </div>
+    </div>
     <button class="nav-btn nav-logout" @click="logout" title="登出">
       <span class="nav-ico">⏻</span><span>登出</span>
     </button>
@@ -481,10 +494,10 @@
     </div>
   </div>
 
-  <!-- 系统设置弹窗 -->
+  <!-- 系统路径设置弹窗 -->
   <div v-if="systemModal" class="modal-bg" @click.self="closeSystemSettings">
     <div class="modal">
-      <h2>&gt;_ 系统设置</h2>
+      <h2>&gt;_ 系统路径设置</h2>
       <label class="pwd-field">
         <span>子进程 TEMP 目录 <span class="muted" style="font-size:11px">// 留空 = 用系统默认</span></span>
         <input v-model="systemForm.temp_dir"

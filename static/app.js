@@ -133,6 +133,8 @@ createApp({
     const pwdForm = reactive({ current: '', next: '', confirm: '' });
     const pwdSaving = ref(false);
     const pwdError = ref('');
+    // 顶栏"设置"下拉菜单开关 (合并了 系统 / .env / 邮件 / 密码)
+    const settingsMenuOpen = ref(false);
     const newProject = reactive({ name: '', description: '', default_prompt: '', auth_payload: '' });
     const reports = ref([]);
     const reportsLoading = ref(false);
@@ -1070,6 +1072,10 @@ createApp({
         else if (route.value === 'reports') loadReports(reportsProjectId.value);
         else loadTasks();
       }, 5000);
+      // 顶栏"设置"下拉: 点菜单外任何位置都关闭 (菜单容器上有 @click.stop 阻断冒泡)
+      document.addEventListener('click', () => {
+        if (settingsMenuOpen.value) settingsMenuOpen.value = false;
+      });
       // tab 重新可见 / 系统从睡眠唤醒 时立刻对账, 别等 5s 轮询
       // (Chrome 后台 tab 的 setInterval 会被节流到分钟级, 从睡眠醒来更慢)
       document.addEventListener('visibilitychange', () => {
@@ -1116,6 +1122,7 @@ createApp({
       passwordModal, passwordIsDefault, pwdForm, pwdSaving, pwdError,
       openPasswordModal, closePasswordModal, submitPasswordChange,
       openLoginBrowser, loginDone, pauseTask, unpauseTask,
+      settingsMenuOpen,
     };
   }
 }).mount('#app');
